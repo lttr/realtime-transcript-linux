@@ -61,7 +61,7 @@ class VoiceTranscriptionDaemon:
             
             # Load faster-whisper model with CPU optimization
             self.whisper_model = WhisperModel(
-                "tiny.en",           # Fastest English model
+                "tiny.en",           # Fastest, most reliable English model
                 device="cpu",        # CPU usage
                 compute_type="int8", # Optimized for CPU
                 download_root=None   # Use default cache location

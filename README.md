@@ -136,28 +136,28 @@ You can also run the components manually for testing:
 When you make changes to the daemon code, restart it with:
 
 ```bash
-# Quick restart after code changes
-systemctl --user restart voice-transcriber.service && ./voice_trigger.py ping
+# Quick restart after code changes (wait for model to load)
+systemctl --user restart voice-transcriber.service && sleep 5 && ./voice_trigger.py ping
 ```
 
 ## Configuration
 
 ### Whisper Model Selection
 
-The system uses the `tiny.en` model by default for fastest performance. You can change this in `voice_daemon.py`:
+The system uses the `tiny.en` model by default for reliable performance. You can change this in `voice_daemon.py`:
 
 ```python
-# In _init_recorder() method
-self.recorder = AudioToTextRecorder(
-    model="tiny.en",    # Options: tiny.en, base.en, small.en
+# In _init_whisper_model() method
+self.whisper_model = WhisperModel(
+    "tiny.en",    # Options: tiny.en, base.en, small.en
     # ... other settings
 )
 ```
 
 **Model Trade-offs**:
 
-- `tiny.en`: Fastest, least accurate, ~39MB
-- `base.en`: Good balance, ~74MB
+- `tiny.en`: **Current** - Fastest, most reliable, ~39MB
+- `base.en`: Better accuracy but may have issues with chunking, ~74MB
 - `small.en`: Better accuracy, slower, ~244MB
 
 ### Voice Activity Detection

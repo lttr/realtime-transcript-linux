@@ -5,8 +5,7 @@ Wants=network.target sound.target
 
 [Service]
 Type=simple
-User=%i
-Group=%i
+# User and Group not needed for user services
 WorkingDirectory=/home/lukas/code/realtime-transcript-linux
 ExecStart=/home/lukas/code/realtime-transcript-linux/venv/bin/python /home/lukas/code/realtime-transcript-linux/voice_daemon.py
 Restart=always
