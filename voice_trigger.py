@@ -110,7 +110,6 @@ class VoiceTranscriptionTrigger:
                 
                 if text:
                     print(f"Transcribed: '{text}'")
-                    self._show_notification(f"Transcribed: {text[:50]}{'...' if len(text) > 50 else ''}")
                     
                     # Inject text into active window
                     if self._inject_text(text):
