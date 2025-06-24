@@ -107,24 +107,14 @@ class VoiceTranscriptionDaemon:
             command = request.get('command')
             
             if command == 'transcribe':
-                self.logger.info("Starting transcription...")
+                self.logger.info("Starting streaming transcription...")
                 
                 # Send acknowledgment
                 response = {'status': 'recording', 'message': 'Recording started'}
                 client_socket.send(json.dumps(response).encode('utf-8'))
                 
-                # Start recording and transcription
-                transcribed_text = self._transcribe_speech()
-                
-                # Send result
-                response = {
-                    'status': 'completed',
-                    'text': transcribed_text,
-                    'message': 'Transcription completed'
-                }
-                client_socket.send(json.dumps(response).encode('utf-8'))
-                
-                self.logger.info(f"Transcription completed: '{transcribed_text}'")
+                # Start streaming transcription with progressive results
+                self._transcribe_speech_streaming(client_socket)
             
             elif command == 'ping':
                 response = {'status': 'alive', 'message': 'Daemon is running'}
@@ -145,7 +135,7 @@ class VoiceTranscriptionDaemon:
             client_socket.close()
     
 
-    def _capture_audio_with_vad(self, max_duration=10):
+    def _capture_audio_with_vad(self, max_duration=20):
         """Capture audio from microphone with simple voice activity detection"""
         audio = None
         stream = None
@@ -170,11 +160,11 @@ class VoiceTranscriptionDaemon:
             frames = []
             silence_threshold = 50  # Lowered for better detection
             silence_frames = 0
-            max_silence_frames = int(self.sample_rate / self.chunk_size * 1.5)  # 1.5 seconds of silence
+            max_silence_frames = int(self.sample_rate / self.chunk_size * 2.5)  # 2.5 seconds of silence for better responsiveness
             recording_started = False
             max_frames = int(self.sample_rate / self.chunk_size * max_duration)
             
-            for _ in range(max_frames):
+            for frame_count in range(max_frames):
                 data = stream.read(self.chunk_size)
                 frames.append(data)
                 
@@ -187,18 +177,24 @@ class VoiceTranscriptionDaemon:
                 else:
                     volume = 0
                 
-                # Log volume for debugging
-                if _ % 16 == 0:  # Log every 16th frame to avoid spam
-                    self.logger.info(f"Audio volume: {volume:.1f} (threshold: {silence_threshold})")
+                # Show recording progress every second
+                if frame_count % int(self.sample_rate / self.chunk_size) == 0:
+                    elapsed_seconds = frame_count // int(self.sample_rate / self.chunk_size)
+                    if recording_started:
+                        self.logger.info(f"🎤 Recording... {elapsed_seconds}s (silence: {silence_frames}/{max_silence_frames})")
+                    elif elapsed_seconds > 0:
+                        self.logger.info(f"⏰ Waiting for speech... {elapsed_seconds}s")
                 
                 if volume > silence_threshold:
+                    if not recording_started:
+                        self.logger.info(f"🎙️ Speech started! Volume: {volume:.1f}")
                     recording_started = True
                     silence_frames = 0
-                    self.logger.info(f"Speech detected! Volume: {volume:.1f}")
                 elif recording_started:
                     silence_frames += 1
                     if silence_frames > max_silence_frames:
-                        self.logger.info("Silence detected, stopping recording")
+                        elapsed_total = frame_count / (self.sample_rate / self.chunk_size)
+                        self.logger.info(f"✅ Recording complete after {elapsed_total:.1f}s")
                         break
             
         except Exception as e:
@@ -228,6 +224,149 @@ class VoiceTranscriptionDaemon:
         
         self.logger.info(f"Captured {len(audio_np)/self.sample_rate:.1f} seconds of audio")
         return audio_np
+    
+    def _transcribe_speech_streaming(self, client_socket):
+        """Perform streaming speech transcription with progressive results"""
+        try:
+            if not self.whisper_model:
+                response = {'status': 'error', 'text': '', 'message': 'Whisper model not loaded'}
+                client_socket.send(json.dumps(response).encode('utf-8'))
+                return
+            
+            # Capture audio with streaming processing
+            final_text = self._capture_and_transcribe_streaming(client_socket)
+            
+            # Send final result
+            response = {
+                'status': 'completed',
+                'text': final_text,
+                'message': 'Transcription completed'
+            }
+            client_socket.send(json.dumps(response).encode('utf-8'))
+            
+            self.logger.info(f"Final transcription: '{final_text}'")
+            
+        except Exception as e:
+            self.logger.error(f"Streaming transcription error: {e}")
+            response = {'status': 'error', 'text': '', 'message': str(e)}
+            client_socket.send(json.dumps(response).encode('utf-8'))
+    
+    def _capture_and_transcribe_streaming(self, client_socket, max_duration=20, chunk_duration=4):
+        """Capture audio and transcribe in chunks for progressive results"""
+        audio = None
+        stream = None
+        full_text = ""
+        
+        try:
+            # Initialize PyAudio
+            audio = pyaudio.PyAudio()
+            
+            # Use OS default microphone
+            self.logger.info("Using OS default microphone for streaming")
+            
+            # Open microphone stream
+            stream = audio.open(
+                format=self.audio_format,
+                channels=self.channels,
+                rate=self.sample_rate,
+                input=True,
+                frames_per_buffer=self.chunk_size
+            )
+            
+            self.logger.info("🎤 Streaming recording... speak now!")
+            
+            frames = []
+            silence_threshold = 50
+            silence_frames = 0
+            max_silence_frames = int(self.sample_rate / self.chunk_size * 2.5)
+            recording_started = False
+            max_frames = int(self.sample_rate / self.chunk_size * max_duration)
+            chunk_frames = int(self.sample_rate / self.chunk_size * chunk_duration)
+            
+            for frame_count in range(max_frames):
+                data = stream.read(self.chunk_size)
+                frames.append(data)
+                
+                # Voice activity detection
+                audio_data = np.frombuffer(data, dtype=np.int16)
+                if len(audio_data) > 0:
+                    rms_squared = np.mean(audio_data.astype(np.float64)**2)
+                    volume = np.sqrt(max(0, rms_squared))
+                else:
+                    volume = 0
+                
+                if volume > silence_threshold:
+                    if not recording_started:
+                        self.logger.info(f"🎙️ Speech started!")
+                    recording_started = True
+                    silence_frames = 0
+                elif recording_started:
+                    silence_frames += 1
+                    if silence_frames > max_silence_frames:
+                        self.logger.info(f"✅ Recording complete")
+                        break
+                
+                # Process chunk every N seconds if we have speech
+                if recording_started and len(frames) >= chunk_frames and len(frames) % chunk_frames == 0:
+                    chunk_text = self._transcribe_audio_chunk(frames[-chunk_frames:])
+                    if chunk_text.strip():
+                        full_text += chunk_text + " "
+                        # Send partial result
+                        response = {
+                            'status': 'partial',
+                            'text': chunk_text.strip(),
+                            'full_text': full_text.strip(),
+                            'message': 'Partial transcription'
+                        }
+                        client_socket.send(json.dumps(response).encode('utf-8'))
+                        self.logger.info(f"Partial: '{chunk_text.strip()}'")
+        
+        except Exception as e:
+            self.logger.error(f"Streaming audio capture error: {e}")
+            return ""
+        
+        finally:
+            if stream:
+                stream.stop_stream()
+                stream.close()
+            if audio:
+                audio.terminate()
+        
+        # Process any remaining audio
+        if frames and recording_started:
+            remaining_text = self._transcribe_audio_chunk(frames)
+            if remaining_text.strip():
+                full_text += remaining_text
+        
+        return full_text.strip()
+    
+    def _transcribe_audio_chunk(self, frames):
+        """Transcribe a chunk of audio frames"""
+        try:
+            if not frames:
+                return ""
+            
+            # Convert frames to audio data
+            audio_data = b''.join(frames)
+            audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+            
+            if len(audio_np) < self.sample_rate * 0.5:  # Less than 0.5 seconds
+                return ""
+            
+            # Transcribe chunk
+            segments, info = self.whisper_model.transcribe(
+                audio_np,
+                language="en",
+                beam_size=1,
+                best_of=1
+            )
+            
+            text = " ".join([segment.text for segment in segments]).strip()
+            return text
+            
+        except Exception as e:
+            self.logger.error(f"Chunk transcription error: {e}")
+            return ""
     
     def _transcribe_speech(self):
         """Perform speech transcription using preloaded model"""

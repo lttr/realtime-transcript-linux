@@ -76,6 +76,53 @@ class VoiceTranscriptionTrigger:
         except:
             pass  # Silently ignore notification errors
     
+    def _handle_streaming_responses(self, client_socket):
+        """Handle streaming partial transcription responses and inject text progressively"""
+        final_text = ""
+        
+        try:
+            while True:
+                # Receive response
+                response_data = client_socket.recv(4096).decode('utf-8')
+                if not response_data:
+                    break
+                    
+                response = json.loads(response_data)
+                status = response.get('status')
+                
+                if status == 'partial':
+                    # Handle partial transcription
+                    partial_text = response.get('text', '').strip()
+                    if partial_text:
+                        print(f"Partial: '{partial_text}'")
+                        # Inject partial text immediately
+                        if self._inject_text(partial_text + " "):
+                            print(f"✓ Injected: '{partial_text}'")
+                        else:
+                            print(f"✗ Failed to inject: '{partial_text}'")
+                
+                elif status == 'completed':
+                    # Handle final result
+                    final_text = response.get('text', '').strip()
+                    print(f"Recording completed")
+                    break
+                    
+                elif status == 'error':
+                    error_msg = response.get('message', 'Unknown error')
+                    print(f"Streaming error: {error_msg}")
+                    self._show_notification(f"Error: {error_msg}", "critical")
+                    break
+                    
+                else:
+                    print(f"Unknown response status: {status}")
+                    break
+                    
+        except Exception as e:
+            print(f"Error handling streaming responses: {e}")
+            return ""
+        
+        return final_text
+    
     def transcribe(self):
         """Trigger voice transcription"""
         print("Connecting to voice transcription daemon...")
@@ -89,7 +136,7 @@ class VoiceTranscriptionTrigger:
         try:
             # Send transcription request
             print("Requesting transcription...")
-            self._show_notification("🎤 Recording... Speak now!")
+            self._show_notification("🎤 Recording... Multi-sentence mode active!", "normal")
             
             response = self._send_request(client_socket, 'transcribe')
             if not response:
@@ -100,24 +147,12 @@ class VoiceTranscriptionTrigger:
             if response.get('status') == 'recording':
                 print("Recording started, speak now...")
                 
-                # Wait for completion response
-                response_data = client_socket.recv(4096).decode('utf-8')
-                response = json.loads(response_data)
-            
-            # Handle transcription result
-            if response.get('status') == 'completed':
-                text = response.get('text', '').strip()
+                # Handle streaming responses
+                final_text = self._handle_streaming_responses(client_socket)
                 
-                if text:
-                    print(f"Transcribed: '{text}'")
-                    
-                    # Inject text into active window
-                    if self._inject_text(text):
-                        print("Text injected successfully")
-                        return True
-                    else:
-                        print("Failed to inject text")
-                        return False
+                if final_text:
+                    print(f"Final transcription: '{final_text}'")
+                    return True
                 else:
                     print("No speech detected")
                     self._show_notification("No speech detected", "low")
