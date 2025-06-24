@@ -63,7 +63,7 @@ class VoiceTranscriptionDaemon:
             self.whisper_model = WhisperModel(
                 "tiny.en",           # Fastest, most reliable English model
                 device="cpu",        # CPU usage
-                compute_type="int8", # Optimized for CPU
+                compute_type="float32", # Higher precision for better accuracy (was int8)
                 download_root=None   # Use default cache location
             )
             
@@ -373,12 +373,15 @@ class VoiceTranscriptionDaemon:
             if len(audio_np) < self.sample_rate * 0.5:  # Less than 0.5 seconds
                 return ""
             
-            # Transcribe chunk
+            # Transcribe chunk with maximum accuracy parameters
             segments, info = self.whisper_model.transcribe(
                 audio_np,
                 language="en",
-                beam_size=1,
-                best_of=1
+                beam_size=5,        # Maximum search breadth (was 3)
+                best_of=5,          # Try 5 attempts for best result (was 3)
+                temperature=0.0,    # Deterministic output
+                condition_on_previous_text=False,  # Disable to prevent repetition loops
+                initial_prompt="High quality transcription with proper punctuation and grammar."
             )
             
             text = " ".join([segment.text for segment in segments]).strip()
@@ -406,8 +409,11 @@ class VoiceTranscriptionDaemon:
             segments, info = self.whisper_model.transcribe(
                 audio_data,
                 language="en",
-                beam_size=1,  # Faster transcription
-                best_of=1     # Single pass for speed
+                beam_size=5,        # Maximum search breadth
+                best_of=5,          # Try 5 attempts for best result
+                temperature=0.0,    # Deterministic output
+                condition_on_previous_text=False,  # Disable to prevent repetition loops
+                initial_prompt="High quality transcription with proper punctuation and grammar."
             )
             
             # Combine all segments into one text
