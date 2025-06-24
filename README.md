@@ -1,5 +1,12 @@
 # Voice Transcription with Global Keyboard Shortcut
 
+My own voice (@lttr):
+
+> This is vibe coded, personal software. It was created only for me, with Claude Code and Claude Pro subscription.
+> I used my keyboard for the first couple of the prompts, then used text generated from my voice using this software.
+
+---
+
 A real-time voice transcription system for Linux that transcribes speech and automatically types it into the currently active window. Triggered by a global keyboard shortcut (Ctrl+Shift+Alt+K).
 
 ## Features
@@ -148,8 +155,9 @@ self.recorder = AudioToTextRecorder(
 ```
 
 **Model Trade-offs**:
+
 - `tiny.en`: Fastest, least accurate, ~39MB
-- `base.en`: Good balance, ~74MB  
+- `base.en`: Good balance, ~74MB
 - `small.en`: Better accuracy, slower, ~244MB
 
 ### Voice Activity Detection
@@ -167,15 +175,17 @@ post_speech_silence_duration=0.2,     # seconds (default: 0.2)
 ### Daemon Won't Start
 
 1. **Check logs**:
+
    ```bash
    # View daemon logs
    journalctl --user -u voice-transcriber.service -f
-   
+
    # Or check log file
    tail -f /tmp/voice_daemon.log
    ```
 
 2. **Test manually**:
+
    ```bash
    # Run daemon in foreground to see errors
    ./voice_daemon.py
@@ -255,3 +265,4 @@ Feel free to submit issues and pull requests to improve the system.
 ## License
 
 This project uses the RealtimeSTT library and follows its licensing terms.
+
