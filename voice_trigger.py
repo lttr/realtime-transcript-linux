@@ -6,6 +6,7 @@ import sys
 import subprocess
 import time
 import os
+import re
 
 class VoiceTranscriptionTrigger:
     def __init__(self, socket_path="/tmp/voice_transcriber.sock"):
@@ -51,8 +52,19 @@ class VoiceTranscriptionTrigger:
             # Small delay to ensure focus is stable
             time.sleep(0.1)
             
-            # Type the text into the active window
-            subprocess.run(['xdotool', 'type', '--delay', '0', text], check=True)
+            # Check if text ends with "just enter" (with optional punctuation/whitespace)
+            just_enter_match = re.search(r'(.*)just\s+enter[.\s]*$', text.strip(), re.IGNORECASE)
+            if just_enter_match:
+                # Type the preceding text and then press Enter
+                preceding_text = just_enter_match.group(1).strip()
+                if preceding_text:
+                    print(f"Typing preceding text: '{preceding_text}'")
+                    subprocess.run(['xdotool', 'type', '--delay', '0', preceding_text], check=True)
+                print("Detected 'just enter' - pressing Enter key")
+                subprocess.run(['xdotool', 'key', 'Return'], check=True)
+            else:
+                # Type the text into the active window
+                subprocess.run(['xdotool', 'type', '--delay', '0', text], check=True)
             
             return True
             
