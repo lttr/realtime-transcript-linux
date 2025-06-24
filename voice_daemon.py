@@ -251,8 +251,8 @@ class VoiceTranscriptionDaemon:
             response = {'status': 'error', 'text': '', 'message': str(e)}
             client_socket.send(json.dumps(response).encode('utf-8'))
     
-    def _capture_and_transcribe_streaming(self, client_socket, max_duration=20, chunk_duration=4):
-        """Capture audio and transcribe in chunks for progressive results"""
+    def _capture_and_transcribe_streaming(self, client_socket, max_duration=45):
+        """Capture audio and transcribe on natural speech pauses for progressive results"""
         audio = None
         stream = None
         full_text = ""
@@ -273,19 +273,25 @@ class VoiceTranscriptionDaemon:
                 frames_per_buffer=self.chunk_size
             )
             
-            self.logger.info("🎤 Streaming recording... speak now!")
+            self.logger.info("🎤 Natural pause recording... speak now!")
             
             frames = []
+            phrase_frames = []  # Accumulate frames for current phrase
             silence_threshold = 50
             silence_frames = 0
-            max_silence_frames = int(self.sample_rate / self.chunk_size * 2.5)
+            
+            # Dual pause detection - more relaxed for natural speech
+            short_pause_frames = int(self.sample_rate / self.chunk_size * 1.5)  # 1.5s = phrase boundary
+            long_pause_frames = int(self.sample_rate / self.chunk_size * 4.0)   # 4s = end recording
+            
             recording_started = False
             max_frames = int(self.sample_rate / self.chunk_size * max_duration)
-            chunk_frames = int(self.sample_rate / self.chunk_size * chunk_duration)
+            min_phrase_frames = int(self.sample_rate / self.chunk_size * 2.0)  # Min 2s for phrase
             
             for frame_count in range(max_frames):
                 data = stream.read(self.chunk_size)
                 frames.append(data)
+                phrase_frames.append(data)
                 
                 # Voice activity detection
                 audio_data = np.frombuffer(data, dtype=np.int16)
@@ -302,24 +308,29 @@ class VoiceTranscriptionDaemon:
                     silence_frames = 0
                 elif recording_started:
                     silence_frames += 1
-                    if silence_frames > max_silence_frames:
-                        self.logger.info(f"✅ Recording complete")
+                    
+                    # Short pause = end of phrase, transcribe and continue
+                    if silence_frames == short_pause_frames and len(phrase_frames) >= min_phrase_frames:
+                        phrase_text = self._transcribe_audio_chunk(phrase_frames)
+                        if phrase_text.strip():
+                            full_text += phrase_text + " "
+                            # Send partial result
+                            response = {
+                                'status': 'partial',
+                                'text': phrase_text.strip(),
+                                'full_text': full_text.strip(),
+                                'message': 'Natural phrase completed'
+                            }
+                            client_socket.send(json.dumps(response).encode('utf-8'))
+                            self.logger.info(f"Phrase: '{phrase_text.strip()}'")
+                        
+                        # Reset for next phrase
+                        phrase_frames = []
+                    
+                    # Long pause = end recording
+                    elif silence_frames > long_pause_frames:
+                        self.logger.info(f"✅ Recording complete after long pause")
                         break
-                
-                # Process chunk every N seconds if we have speech
-                if recording_started and len(frames) >= chunk_frames and len(frames) % chunk_frames == 0:
-                    chunk_text = self._transcribe_audio_chunk(frames[-chunk_frames:])
-                    if chunk_text.strip():
-                        full_text += chunk_text + " "
-                        # Send partial result
-                        response = {
-                            'status': 'partial',
-                            'text': chunk_text.strip(),
-                            'full_text': full_text.strip(),
-                            'message': 'Partial transcription'
-                        }
-                        client_socket.send(json.dumps(response).encode('utf-8'))
-                        self.logger.info(f"Partial: '{chunk_text.strip()}'")
         
         except Exception as e:
             self.logger.error(f"Streaming audio capture error: {e}")
@@ -332,11 +343,20 @@ class VoiceTranscriptionDaemon:
             if audio:
                 audio.terminate()
         
-        # Process any remaining audio
-        if frames and recording_started:
-            remaining_text = self._transcribe_audio_chunk(frames)
+        # Process any remaining phrase audio
+        if phrase_frames and recording_started and len(phrase_frames) >= min_phrase_frames:
+            remaining_text = self._transcribe_audio_chunk(phrase_frames)
             if remaining_text.strip():
-                full_text += remaining_text
+                full_text += remaining_text + " "
+                # Send final partial result
+                response = {
+                    'status': 'partial',
+                    'text': remaining_text.strip(),
+                    'full_text': full_text.strip(),
+                    'message': 'Final phrase completed'
+                }
+                client_socket.send(json.dumps(response).encode('utf-8'))
+                self.logger.info(f"Final phrase: '{remaining_text.strip()}'")
         
         return full_text.strip()
     

@@ -105,6 +105,7 @@ class VoiceTranscriptionTrigger:
                     # Handle final result
                     final_text = response.get('text', '').strip()
                     print(f"Recording completed")
+                    self._show_notification("✓ Done", "low")
                     break
                     
                 elif status == 'error':
@@ -136,7 +137,7 @@ class VoiceTranscriptionTrigger:
         try:
             # Send transcription request
             print("Requesting transcription...")
-            self._show_notification("🎤 Recording... Multi-sentence mode active!", "normal")
+            self._show_notification("🎤 Natural pause recording active!", "normal")
             
             response = self._send_request(client_socket, 'transcribe')
             if not response:
