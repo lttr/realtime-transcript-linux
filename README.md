@@ -124,6 +124,15 @@ You can also run the components manually for testing:
 ./voice_trigger.py ping
 ```
 
+### Updating the Daemon
+
+When you make changes to the daemon code, restart it with:
+
+```bash
+# Quick restart after code changes
+systemctl --user restart voice-transcriber.service && ./voice_trigger.py ping
+```
+
 ## Configuration
 
 ### Whisper Model Selection
