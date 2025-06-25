@@ -335,6 +335,11 @@ class VoiceTranscriptionDaemon:
                     
                     # Short pause = end of phrase, transcribe and continue
                     if silence_frames == short_pause_frames and len(phrase_frames) >= min_phrase_frames:
+                        # Check if recording was stopped during silence
+                        if self.stop_recording:
+                            self.logger.info("🛑 Recording stopped during phrase processing")
+                            break
+                            
                         phrase_text = self._transcribe_audio_chunk(phrase_frames)
                         if phrase_text.strip():
                             full_text += phrase_text + " "
@@ -367,8 +372,8 @@ class VoiceTranscriptionDaemon:
             if audio:
                 audio.terminate()
         
-        # Process any remaining phrase audio
-        if phrase_frames and recording_started and len(phrase_frames) >= min_phrase_frames:
+        # Process any remaining phrase audio only if recording wasn't manually stopped
+        if phrase_frames and recording_started and len(phrase_frames) >= min_phrase_frames and not self.stop_recording:
             remaining_text = self._transcribe_audio_chunk(phrase_frames)
             if remaining_text.strip():
                 full_text += remaining_text + " "
@@ -381,6 +386,9 @@ class VoiceTranscriptionDaemon:
                 }
                 client_socket.send(json.dumps(response).encode('utf-8'))
                 self.logger.info(f"Final phrase: '{remaining_text.strip()}'")
+        
+        # Reset stop flag to prevent interference with next recording
+        self.stop_recording = False
         
         return full_text.strip()
     
@@ -397,6 +405,8 @@ class VoiceTranscriptionDaemon:
             if len(audio_np) < self.sample_rate * 0.5:  # Less than 0.5 seconds
                 return ""
             
+            self.logger.info(f"Transcribing {len(audio_np)/self.sample_rate:.1f}s audio chunk")
+            
             # Transcribe chunk with maximum accuracy parameters
             segments, info = self.whisper_model.transcribe(
                 audio_np,
@@ -409,6 +419,7 @@ class VoiceTranscriptionDaemon:
             )
             
             text = " ".join([segment.text for segment in segments]).strip()
+            self.logger.info(f"Transcription result: '{text[:50]}{'...' if len(text) > 50 else ''}'")
             return text
             
         except Exception as e:
