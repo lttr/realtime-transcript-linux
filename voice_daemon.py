@@ -372,8 +372,10 @@ class VoiceTranscriptionDaemon:
             if audio:
                 audio.terminate()
         
-        # Process any remaining phrase audio only if recording wasn't manually stopped
-        if phrase_frames and recording_started and len(phrase_frames) >= min_phrase_frames and not self.stop_recording:
+        # Process any remaining phrase audio (always process final speech, even if manually stopped)
+        # Use shorter minimum for final chunk to catch last words
+        final_min_frames = int(self.sample_rate / self.chunk_size * 0.5)  # 0.5s minimum for final chunk
+        if phrase_frames and recording_started and len(phrase_frames) >= final_min_frames:
             remaining_text = self._transcribe_audio_chunk(phrase_frames)
             if remaining_text.strip():
                 full_text += remaining_text + " "
