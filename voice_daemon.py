@@ -28,6 +28,8 @@ class VoiceTranscriptionDaemon:
         self.server_socket = None
         self.whisper_model = None  # Preloaded Whisper model
         self.running = False
+        self.stop_recording = False  # Flag to stop recording early
+        self.recording_socket = None  # Socket for active recording session
         
         # Audio capture settings
         self.sample_rate = 16000
@@ -109,12 +111,28 @@ class VoiceTranscriptionDaemon:
             if command == 'transcribe':
                 self.logger.info("Starting streaming transcription...")
                 
+                # Store the recording socket
+                self.recording_socket = client_socket
+                
                 # Send acknowledgment
                 response = {'status': 'recording', 'message': 'Recording started'}
                 client_socket.send(json.dumps(response).encode('utf-8'))
                 
                 # Start streaming transcription with progressive results
                 self._transcribe_speech_streaming(client_socket)
+                
+                # Clear recording socket when done
+                self.recording_socket = None
+            
+            elif command == 'stop':
+                if self.recording_socket:
+                    self.logger.info("Stop recording command received")
+                    self.stop_recording = True
+                    response = {'status': 'stopped', 'message': 'Recording stopped'}
+                    client_socket.send(json.dumps(response).encode('utf-8'))
+                else:
+                    response = {'status': 'not_recording', 'message': 'No active recording session'}
+                    client_socket.send(json.dumps(response).encode('utf-8'))
             
             elif command == 'ping':
                 response = {'status': 'alive', 'message': 'Daemon is running'}
@@ -256,6 +274,7 @@ class VoiceTranscriptionDaemon:
         audio = None
         stream = None
         full_text = ""
+        self.stop_recording = False
         
         try:
             # Initialize PyAudio
@@ -289,6 +308,11 @@ class VoiceTranscriptionDaemon:
             min_phrase_frames = int(self.sample_rate / self.chunk_size * 2.0)  # Min 2s for phrase
             
             for frame_count in range(max_frames):
+                # Check for manual stop signal
+                if self.stop_recording:
+                    self.logger.info("🛑 Recording stopped by user command")
+                    break
+                
                 data = stream.read(self.chunk_size)
                 frames.append(data)
                 phrase_frames.append(data)

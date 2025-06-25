@@ -97,8 +97,9 @@ systemctl --user start voice-transcriber.service
 systemctl --user status voice-transcriber.service
 ```
 
-### 5. Configure GNOME Keyboard Shortcut
+### 5. Configure GNOME Keyboard Shortcuts
 
+#### Start Recording Shortcut
 1. Open **Settings** → **Keyboard** → **Keyboard Shortcuts**
 2. Click **"View and Customize Shortcuts"**
 3. Scroll down and click **"Custom Shortcuts"**
@@ -108,12 +109,19 @@ systemctl --user status voice-transcriber.service
    - **Command**: `/home/lukas/code/realtime-transcript-linux/voice_trigger.py`
    - **Shortcut**: Press `Ctrl+Shift+Alt+K` (or your preferred combination)
 
+#### Stop Recording Shortcut (Optional)
+1. Click the **"+"** button to add another shortcut
+2. Configure the stop shortcut:
+   - **Name**: `Stop Voice Recording`
+   - **Command**: `/home/lukas/code/realtime-transcript-linux/voice_trigger.py stop`
+   - **Shortcut**: Press `Ctrl+Shift+Alt+S` (or your preferred combination)
+
 ## Usage
 
 1. **Start the system**: The daemon should start automatically on login (if using systemd service)
 2. **Press the keyboard shortcut**: `Ctrl+Shift+Alt+K`
 3. **Speak clearly**: The system will show a notification that it's recording
-4. **Stop speaking**: The system automatically detects when you stop talking
+4. **Stop recording**: Either wait for automatic detection (4 seconds of silence) or press `Ctrl+Shift+Alt+S` to stop immediately
 5. **Text appears**: Transcribed text is automatically typed into the active window
 
 ### Manual Operation
@@ -129,6 +137,9 @@ You can also run the components manually for testing:
 
 # Check if daemon is running
 ./voice_trigger.py ping
+
+# Stop active recording
+./voice_trigger.py stop
 ```
 
 ### Updating the Daemon

@@ -203,6 +203,35 @@ class VoiceTranscriptionTrigger:
             return False
         finally:
             client_socket.close()
+    
+    def stop_recording(self):
+        """Stop active recording session"""
+        client_socket = self._connect_to_daemon()
+        if not client_socket:
+            print("Error: Cannot connect to voice daemon")
+            return False
+        
+        try:
+            response = self._send_request(client_socket, 'stop')
+            if response:
+                if response.get('status') == 'stopped':
+                    print("Recording stopped successfully")
+                    self._show_notification("🛑 Recording stopped", "normal")
+                    return True
+                elif response.get('status') == 'not_recording':
+                    print("No active recording session")
+                    return False
+                else:
+                    print(f"Unexpected response: {response}")
+                    return False
+            else:
+                print("Failed to send stop command")
+                return False
+        except Exception as e:
+            print(f"Error stopping recording: {e}")
+            return False
+        finally:
+            client_socket.close()
 
 def main():
     trigger = VoiceTranscriptionTrigger()
@@ -219,11 +248,16 @@ def main():
                 print("Voice daemon is not running")
                 sys.exit(1)
         
+        elif command == 'stop':
+            success = trigger.stop_recording()
+            sys.exit(0 if success else 1)
+        
         elif command == 'help':
             print("Voice Transcription Trigger")
             print("Usage:")
             print("  voice_trigger.py          - Start voice transcription")
             print("  voice_trigger.py ping     - Check if daemon is running")
+            print("  voice_trigger.py stop     - Stop active recording")
             print("  voice_trigger.py help     - Show this help")
             sys.exit(0)
         
