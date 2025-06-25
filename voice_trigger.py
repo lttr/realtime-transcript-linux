@@ -59,7 +59,9 @@ class VoiceTranscriptionTrigger:
                 preceding_text = just_enter_match.group(1).strip()
                 if preceding_text:
                     print(f"Typing preceding text: '{preceding_text}'")
-                    subprocess.run(['xdotool', 'type', '--delay', '0', preceding_text], check=True)
+                    subprocess.run(['xdotool', 'type', '--delay', '0', preceding_text + " (enter)"], check=True)
+                else:
+                    subprocess.run(['xdotool', 'type', '--delay', '0', "(enter)"], check=True)
                 print("Detected 'just enter' - pressing Enter key")
                 subprocess.run(['xdotool', 'key', 'Return'], check=True)
             else:
