@@ -407,15 +407,13 @@ class VoiceTranscriptionDaemon:
             
             self.logger.info(f"Transcribing {len(audio_np)/self.sample_rate:.1f}s audio chunk")
             
-            # Transcribe chunk with maximum accuracy parameters
+            # Transcribe chunk with anti-repetition parameters
             segments, info = self.whisper_model.transcribe(
                 audio_np,
                 language="en",
-                beam_size=5,        # Maximum search breadth (was 3)
-                best_of=5,          # Try 5 attempts for best result (was 3)
-                temperature=0.0,    # Deterministic output
-                condition_on_previous_text=False,  # Disable to prevent repetition loops
-                initial_prompt="High quality transcription with proper punctuation and grammar."
+                beam_size=1,        # Reduced beam size to prevent repetition loops
+                temperature=0.3,    # Add randomness to break repetition patterns
+                condition_on_previous_text=False  # Disable to prevent repetition loops
             )
             
             text = " ".join([segment.text for segment in segments]).strip()

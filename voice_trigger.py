@@ -80,10 +80,15 @@ class VoiceTranscriptionTrigger:
     def _show_notification(self, message, urgency="normal"):
         """Show desktop notification if notify-send is available"""
         try:
+            # Very short expire times for minimal notification persistence
+            expire_time = "800" if urgency == "low" else "1500"
             subprocess.run([
                 'notify-send', 
+                '--app-name', 'Voice Transcription',
                 '--urgency', urgency,
-                '--expire-time', '2000',
+                '--expire-time', expire_time,
+                '--hint', 'int:transient:1',  # Mark as transient to auto-dismiss
+                '--hint', 'string:desktop-entry:voice-transcription',  # Additional hint for grouping
                 'Voice Transcription', 
                 message
             ], check=False)  # Don't fail if notify-send is not available
@@ -119,7 +124,7 @@ class VoiceTranscriptionTrigger:
                     # Handle final result
                     final_text = response.get('text', '').strip()
                     print(f"Recording completed")
-                    self._show_notification("✓ Done", "low")
+                    # No notification for completion - text injection is the feedback
                     break
                     
                 elif status == 'error':
@@ -151,7 +156,6 @@ class VoiceTranscriptionTrigger:
         try:
             # Send transcription request
             print("Requesting transcription...")
-            self._show_notification("🎤 Natural pause recording active!", "normal")
             
             response = self._send_request(client_socket, 'transcribe')
             if not response:
@@ -161,6 +165,7 @@ class VoiceTranscriptionTrigger:
             # Handle recording acknowledgment
             if response.get('status') == 'recording':
                 print("Recording started, speak now...")
+                self._show_notification("🎤 Recording started", "normal")
                 
                 # Handle streaming responses
                 final_text = self._handle_streaming_responses(client_socket)
@@ -222,6 +227,7 @@ class VoiceTranscriptionTrigger:
                     return True
                 elif response.get('status') == 'not_recording':
                     print("No active recording session")
+                    self._show_notification("No recording to stop", "low")
                     return False
                 else:
                     print(f"Unexpected response: {response}")
