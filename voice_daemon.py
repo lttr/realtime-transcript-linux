@@ -111,6 +111,9 @@ class VoiceTranscriptionDaemon:
             if command == 'transcribe':
                 self.logger.info("Starting streaming transcription...")
                 
+                # Reset stop flag for new recording session
+                self.stop_recording = False
+                
                 # Store the recording socket
                 self.recording_socket = client_socket
                 
@@ -374,7 +377,7 @@ class VoiceTranscriptionDaemon:
         
         # Process any remaining phrase audio (always process final speech, even if manually stopped)
         # Use shorter minimum for final chunk to catch last words
-        final_min_frames = int(self.sample_rate / self.chunk_size * 0.5)  # 0.5s minimum for final chunk
+        final_min_frames = int(self.sample_rate / self.chunk_size * 0.3)  # 0.3s minimum for final chunk
         if phrase_frames and recording_started and len(phrase_frames) >= final_min_frames:
             remaining_text = self._transcribe_audio_chunk(phrase_frames)
             if remaining_text.strip():
