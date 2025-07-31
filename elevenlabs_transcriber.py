@@ -152,9 +152,12 @@ class ElevenLabsTranscriber:
                 
                 data = {
                     'model_id': self.model_id,
-                    'language_code': language,
                     'tag_audio_events': False  # Disable audio event descriptions
                 }
+                
+                # Only add language_code if not in auto-detection mode
+                if language is not None:
+                    data['language_code'] = language
                 
                 headers = {
                     'xi-api-key': self.api_key

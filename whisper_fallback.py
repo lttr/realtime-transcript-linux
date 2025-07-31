@@ -90,13 +90,17 @@ class WhisperFallback:
             start_time = time.time()
             
             # Transcribe with anti-repetition parameters (same as original)
-            segments, info = self.whisper_model.transcribe(
-                audio_data,
-                language=language,
-                beam_size=1,        # Reduced to prevent repetition
-                temperature=0.3,    # Add randomness to break repetition
-                condition_on_previous_text=False  # Disable to prevent loops
-            )
+            transcribe_params = {
+                'beam_size': 1,        # Reduced to prevent repetition
+                'temperature': 0.3,    # Add randomness to break repetition
+                'condition_on_previous_text': False  # Disable to prevent loops
+            }
+            
+            # Only add language parameter if not in auto-detection mode
+            if language is not None:
+                transcribe_params['language'] = language
+            
+            segments, info = self.whisper_model.transcribe(audio_data, **transcribe_params)
             
             # Combine segments
             text = " ".join([segment.text for segment in segments]).strip()

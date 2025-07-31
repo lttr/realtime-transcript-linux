@@ -49,7 +49,7 @@ A real-time voice transcription system for Linux GNOME that captures speech via 
 - **Model loading**: Whisper takes 5+ seconds on first load, then instant
 
 #### Technical Features
-- **Multi-language support**: English and Czech with automatic system detection
+- **Automatic language detection**: Seamlessly handles mixed Czech/English conversations
 - **Natural pause detection**: Dual-threshold VAD distinguishes phrase boundaries from recording end
 - **Streaming transcription**: Processes 2+ second audio chunks on natural speech pauses
 - **Progressive injection**: Injects text as phrases complete, not just at recording end
@@ -80,6 +80,7 @@ A real-time voice transcription system for Linux GNOME that captures speech via 
 
 # Language management
 ./voice_hybrid.py lang          # Show current language
+./voice_hybrid.py lang auto     # Auto-detect language (default)
 ./voice_hybrid.py lang en       # Set to English
 ./voice_hybrid.py lang cs       # Set to Czech
 
@@ -172,11 +173,12 @@ Located in `whisper_fallback.py` initialization and `voice_daemon.py`:
 - Context: `condition_on_previous_text=False` (prevents repetition loops)
 
 ### Language Support
-The hybrid system supports English and Czech:
-- **English (en)**: Default language, auto-detected from system locale
-- **Czech (cs)**: Full support in both ElevenLabs API and Whisper fallback
-- **Auto-detection**: System language detected from LANG/LC_ALL environment variables
-- **Manual selection**: Use `./voice_hybrid.py lang <code>` to set language
+The hybrid system supports automatic and manual language selection:
+- **Auto-detect (auto)**: Default mode, automatically detects language for each phrase (recommended)
+- **English (en)**: Force English-only transcription
+- **Czech (cs)**: Force Czech-only transcription
+- **Mixed-language support**: Auto mode handles seamless Czech/English switching within conversations
+- **Manual selection**: Use `./voice_hybrid.py lang <code>` to set language mode
 
 ### Voice Activity Detection
 Located in `audio_utils.py` AudioCapture class:

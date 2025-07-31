@@ -11,7 +11,7 @@ A real-time voice transcription system for Linux that transcribes speech and aut
 
 ## Features
 
-- **Multi-language support** - English and Czech with automatic system detection
+- **Automatic language detection** - Seamlessly handles mixed Czech/English conversations
 - **Hybrid transcription engine** with ElevenLabs API primary and Whisper fallback
 - **Lightning-fast cloud processing** via ElevenLabs with automatic local fallback
 - **Global keyboard shortcut** integration with GNOME
@@ -208,6 +208,7 @@ Test the hybrid system manually:
 
 # Language management
 ./voice_hybrid.py lang          # Show current language
+./voice_hybrid.py lang auto     # Auto-detect language (default)
 ./voice_hybrid.py lang en       # Set to English  
 ./voice_hybrid.py lang cs       # Set to Czech
 
@@ -251,26 +252,29 @@ Check which engines are available:
 
 ### Language Support
 
-The system supports English and Czech transcription:
+The system provides seamless automatic language detection for mixed conversations:
 
-**Supported Languages:**
-- **English (en)** - Default language, automatically detected from system locale
-- **Czech (cs)** - Full support in both ElevenLabs API and Whisper fallback
+**Language Modes:**
+- **Auto-detect (auto)** - Default mode, automatically detects language for each phrase
+- **English (en)** - Force English-only transcription
+- **Czech (cs)** - Force Czech-only transcription
 
 **Language Management:**
 ```bash
-# Show current language
+# Show current language mode
 ./voice_hybrid.py lang
 
-# Set language manually
-./voice_hybrid.py lang en    # English
-./voice_hybrid.py lang cs    # Czech
+# Set language mode
+./voice_hybrid.py lang auto  # Automatic detection (default)
+./voice_hybrid.py lang en    # Force English
+./voice_hybrid.py lang cs    # Force Czech
 ```
 
-**Automatic Detection:**
-- System automatically detects language from `LANG`, `LC_ALL`, or `LC_MESSAGES` environment variables
-- Falls back to English if system language is not supported
-- Both ElevenLabs API and Whisper fallback respect the selected language
+**Mixed-Language Conversations:**
+- **Seamless switching**: Auto mode handles Czech/English switching within single conversations
+- **Perfect for bilingual users**: Speak naturally without manual language switching
+- **Example**: "Tohle je česká věta, but then I switch to English" - both parts transcribed correctly
+- **Works with both engines**: ElevenLabs API and Whisper fallback support automatic detection
 
 ### ElevenLabs API Settings
 

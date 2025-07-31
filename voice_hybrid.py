@@ -37,13 +37,14 @@ class HybridVoiceTranscriber:
         
         # Language configuration
         self.supported_languages = {
+            'auto': {'name': 'Auto-detect', 'elevenlabs': None, 'whisper': None},
             'en': {'name': 'English', 'elevenlabs': 'en', 'whisper': 'en'},
             'cs': {'name': 'Czech', 'elevenlabs': 'cs', 'whisper': 'cs'}
         }
         self.current_language = self._detect_system_language()
     
     def _detect_system_language(self):
-        """Detect system language and default to English if not supported"""
+        """Detect system language preference, default to auto-detection for best mixed-language support"""
         try:
             import locale
             import os
@@ -53,9 +54,9 @@ class HybridVoiceTranscriber:
                 lang_env = os.getenv(env_var)
                 if lang_env:
                     lang_code = lang_env.split('_')[0].lower()
-                    if lang_code in self.supported_languages:
-                        self.logger.info(f"Detected system language: {self.supported_languages[lang_code]['name']}")
-                        return lang_code
+                    if lang_code in self.supported_languages and lang_code != 'auto':
+                        self.logger.info(f"Detected system language: {self.supported_languages[lang_code]['name']}, but using auto-detection for mixed-language support")
+                        return 'auto'  # Use auto-detection even if we detect a specific language
                     break
             
             # Fall back to locale if env vars don't work
@@ -63,18 +64,18 @@ class HybridVoiceTranscriber:
                 system_lang = locale.getlocale()[0]
                 if system_lang:
                     lang_code = system_lang.split('_')[0].lower()
-                    if lang_code in self.supported_languages:
-                        self.logger.info(f"Detected system language: {self.supported_languages[lang_code]['name']}")
-                        return lang_code
+                    if lang_code in self.supported_languages and lang_code != 'auto':
+                        self.logger.info(f"Detected system language: {self.supported_languages[lang_code]['name']}, but using auto-detection for mixed-language support")
+                        return 'auto'  # Use auto-detection even if we detect a specific language
             except:
                 pass
                 
         except Exception as e:
             self.logger.debug(f"Could not detect system language: {e}")
         
-        # Default to English
-        self.logger.info("Defaulting to English language")
-        return 'en'
+        # Default to auto-detection for best bilingual experience
+        self.logger.info("Using automatic language detection for optimal bilingual transcription")
+        return 'auto'
     
     def set_language(self, lang_code: str):
         """Set transcription language"""
@@ -304,7 +305,7 @@ def main():
             print("  voice_hybrid.py stop     - Stop active recording")
             print("  voice_hybrid.py status   - Show engine availability")
             print("  voice_hybrid.py lang     - Show current language")
-            print("  voice_hybrid.py lang <code> - Set language (en, cs)")
+            print("  voice_hybrid.py lang <code> - Set language (auto, en, cs)")
             print("  voice_hybrid.py help     - Show this help")
             print()
             print("Languages:")
