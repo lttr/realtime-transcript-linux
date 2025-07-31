@@ -12,13 +12,14 @@ from audio_utils import AudioCapture
 class ElevenLabsTranscriber:
     """ElevenLabs Speech-to-Text API client with error handling and retries"""
     
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, skip_availability_check: bool = False):
         self.api_key = api_key or os.getenv('ELEVENLABS_API_KEY')
         self.base_url = "https://api.elevenlabs.io/v1"
         self.model_id = "scribe_v1"
+        self.skip_availability_check = skip_availability_check
         
-        # Timeout and retry settings
-        self.quick_test_timeout = 3.0  # 3 seconds for connectivity test
+        # Timeout and retry settings  
+        self.quick_test_timeout = 5.0  # 5 seconds for connectivity test
         self.api_timeout = 8.0  # 8 seconds for transcription requests
         self.max_retries = 2
         self.retry_delay = 1.0
@@ -37,22 +38,34 @@ class ElevenLabsTranscriber:
         if not self.api_key.startswith('sk_'):
             return False
         
+        # If skip check is enabled, assume it's available (optimistic)
+        if self.skip_availability_check:
+            return True
+        
         try:
             # Quick connectivity test using models endpoint (more permissive)
             response = requests.get(
-                f"{self.base_url}/models",
+                f"{self.base_url}/models", 
                 headers={"xi-api-key": self.api_key},
                 timeout=self.quick_test_timeout
             )
-            # Accept both 200 and 401 as signs that API is reachable
-            # 401 might mean limited permissions but API works
-            return response.status_code in [200, 401]
+            # Accept wide range of status codes as "API is reachable"
+            # 200: Success, 401: Auth issue but API works, 429: Rate limited but API works
+            # 403: Permissions but API works, 422: Bad request but API works
+            return response.status_code in [200, 401, 403, 422, 429]
             
-        except (requests.exceptions.RequestException, requests.exceptions.Timeout):
+        except requests.exceptions.Timeout:
+            # Still consider timeout as unavailable since we need fast responses
+            self.logger.debug(f"API timeout after {self.quick_test_timeout}s")
+            return False
+        except requests.exceptions.ConnectionError:
+            # Network/DNS issues - definitely unavailable
+            self.logger.debug("API connection error")
             return False
         except Exception as e:
-            self.logger.debug(f"API availability check failed: {e}")
-            return False
+            # For any other errors, be optimistic and assume API might work
+            self.logger.debug(f"API availability check error (assuming available): {e}")
+            return True  # Changed from False to True - be optimistic
     
     def transcribe_audio(self, audio_data: Union[np.ndarray, bytes], language: str = "en") -> Optional[str]:
         """

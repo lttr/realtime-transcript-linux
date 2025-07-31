@@ -14,7 +14,8 @@ class HybridVoiceTranscriber:
     
     def __init__(self):
         self.audio_capture = AudioCapture()
-        self.elevenlabs = ElevenLabsTranscriber()
+        # Use optimistic mode - skip availability check, just try API directly
+        self.elevenlabs = ElevenLabsTranscriber(skip_availability_check=True)
         self.whisper = WhisperFallback()
         self.text_injector = TextInjector()
         self.notification = NotificationHelper()
@@ -35,19 +36,19 @@ class HybridVoiceTranscriber:
         self.logger = logging.getLogger(__name__)
     
     def _select_transcription_engine(self):
-        """Smart engine selection: ElevenLabs primary, Whisper fallback"""
+        """Smart engine selection: Try ElevenLabs first, fallback on failure"""
         
-        # Check if ElevenLabs is available and working
-        if self.elevenlabs.is_available():
-            self.logger.info("🌐 Using ElevenLabs API for transcription")
+        # Always try ElevenLabs first if API key is configured
+        if self.elevenlabs.api_key:
+            self.logger.info("🌐 Attempting ElevenLabs API transcription")
             self.current_engine = "elevenlabs"
             return self.elevenlabs
         
-        # Fallback to Whisper
+        # No API key - use Whisper directly
         if self.whisper.is_available():
-            self.logger.info("🔄 ElevenLabs unavailable, using Whisper fallback")
+            self.logger.info("🔄 No API key configured, using Whisper")
             self.notification.show_notification(
-                "🔄 Using local processing (may take longer)", 
+                "🔄 Using local processing (no API key)", 
                 urgency="normal", 
                 expire_time="2000"
             )
