@@ -6,14 +6,25 @@ import logging
 import requests
 from typing import Optional, Union
 import numpy as np
+from pathlib import Path
 from audio_utils import AudioCapture
+
+# Try to import dotenv, but don't fail if not available
+try:
+    from dotenv import load_dotenv
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
 
 
 class ElevenLabsTranscriber:
     """ElevenLabs Speech-to-Text API client with error handling and retries"""
     
     def __init__(self, api_key: Optional[str] = None, skip_availability_check: bool = False):
-        self.api_key = api_key or os.getenv('ELEVENLABS_API_KEY')
+        # Initialize logger first
+        self.logger = logging.getLogger(__name__)
+        
+        self.api_key = api_key or self._load_api_key()
         self.base_url = "https://api.elevenlabs.io/v1"
         self.model_id = "scribe_v1"
         self.skip_availability_check = skip_availability_check
@@ -24,10 +35,38 @@ class ElevenLabsTranscriber:
         self.max_retries = 2
         self.retry_delay = 1.0
         
-        self.logger = logging.getLogger(__name__)
-        
         if not self.api_key:
-            self.logger.warning("No ElevenLabs API key found. Set ELEVENLABS_API_KEY environment variable.")
+            self.logger.warning("No ElevenLabs API key found. Create .env file or set ELEVENLABS_API_KEY environment variable.")
+    
+    def _load_api_key(self) -> Optional[str]:
+        """Load API key from .env file, then environment variable"""
+        
+        # First try to load from .env file in the script's directory
+        if DOTENV_AVAILABLE:
+            try:
+                script_dir = Path(__file__).parent
+                env_file = script_dir / '.env'
+                
+                if env_file.exists():
+                    load_dotenv(env_file)
+                    self.logger.debug(f"Loaded .env file from {env_file}")
+                
+            except Exception as e:
+                self.logger.debug(f"Could not load .env file: {e}")
+        
+        # Try environment variable (works with both .env loaded and system env)
+        api_key = os.getenv('ELEVENLABS_API_KEY')
+        
+        if api_key:
+            return api_key
+        
+        # If no key found, log helpful message
+        if DOTENV_AVAILABLE:
+            self.logger.debug("No API key found in .env file or environment variables")
+        else:
+            self.logger.debug("No API key found in environment variables (python-dotenv not available)")
+        
+        return None
     
     def is_available(self) -> bool:
         """Quick connectivity test to ElevenLabs API"""

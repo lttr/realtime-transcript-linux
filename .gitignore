@@ -1,2 +1,9 @@
+# Environment variables (contains API keys)
+.env
+
+# Python
+__pycache__/
+
+# Logs
+*.log
 realtimesst.log
-__pycache__

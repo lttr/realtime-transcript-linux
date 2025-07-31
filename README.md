@@ -91,19 +91,41 @@ cd ~/code/realtime-transcript-linux
 python3 -m venv venv
 source venv/bin/activate
 
-# Install Python dependencies (ElevenLabs API, Whisper, PyAudio, numpy)
+# Install Python dependencies (ElevenLabs API, python-dotenv, Whisper, PyAudio, numpy)
 pip install -r requirements.txt
 ```
 
 ### 3. Configure ElevenLabs API (Recommended)
 
-For best performance, set up ElevenLabs API:
+For best performance, set up ElevenLabs API using a `.env` file:
 
 ```bash
-# Set your ElevenLabs API key (get from https://elevenlabs.io)
-export ELEVENLABS_API_KEY="your_api_key_here"
+# Copy the example file
+cp .env.example .env
 
-# Add to your shell profile for persistence
+# Edit the .env file with your API key
+nano .env
+```
+
+**Content of `.env` file:**
+```bash
+ELEVENLABS_API_KEY=your_api_key_here
+```
+
+**Get your API key:**
+1. Visit https://elevenlabs.io/app/settings/api-keys
+2. Create or copy your API key
+3. Paste it in the `.env` file (replace `your_api_key_here`)
+
+**Why use .env file?**
+- ✅ Works with GNOME keyboard shortcuts (no shell environment needed)
+- ✅ Secure (automatically ignored by git)
+- ✅ Easy to manage and update
+- ✅ Standard practice for API keys
+
+**Alternative:** You can still use environment variables:
+```bash
+export ELEVENLABS_API_KEY="your_api_key_here"
 echo 'export ELEVENLABS_API_KEY="your_api_key_here"' >> ~/.bashrc
 ```
 
@@ -223,17 +245,29 @@ Check which engines are available:
 
 ### ElevenLabs API Settings
 
-Configure API behavior by setting environment variables:
+Configure API behavior using `.env` file or environment variables:
 
+**Primary Method - .env file:**
 ```bash
-# Required: Your API key from https://elevenlabs.io
-export ELEVENLABS_API_KEY="your_api_key_here"
-
-# Optional: Adjust timeout settings in elevenlabs_transcriber.py
-# - api_timeout: 8.0 seconds (transcription request timeout)
-# - quick_test_timeout: 3.0 seconds (connectivity test timeout)  
-# - max_retries: 2 attempts (retry count for failed requests)
+# In your .env file
+ELEVENLABS_API_KEY=your_api_key_here
 ```
+
+**Alternative - Environment variables:**
+```bash
+export ELEVENLABS_API_KEY="your_api_key_here"
+```
+
+**Advanced Settings:**
+Adjust timeout settings in `elevenlabs_transcriber.py`:
+- `api_timeout`: 8.0 seconds (transcription request timeout)
+- `quick_test_timeout`: 5.0 seconds (connectivity test timeout)  
+- `max_retries`: 2 attempts (retry count for failed requests)
+
+**API Key Priority:**
+1. Explicit parameter (when creating transcriber instance)
+2. `.env` file in project directory
+3. Environment variable `ELEVENLABS_API_KEY`
 
 ### Whisper Fallback Settings
 
@@ -308,6 +342,22 @@ unset ELEVENLABS_API_KEY  # Forces Whisper-only mode
 4. **View logs**:
    ```bash
    tail -f /tmp/voice_hybrid.log
+   ```
+
+5. **API key not loading from .env**:
+   ```bash
+   # Check if .env file exists and has correct content
+   cat .env
+   
+   # Verify file permissions (should be readable)
+   ls -la .env
+   
+   # Test API key manually
+   grep ELEVENLABS_API_KEY .env
+   
+   # Ensure no extra spaces or quotes in .env file
+   # Correct format: ELEVENLABS_API_KEY=sk_your_key_here
+   # Incorrect: ELEVENLABS_API_KEY = "sk_your_key_here"
    ```
 
 ### Legacy Daemon Issues
@@ -406,9 +456,11 @@ Feel free to submit issues and pull requests to improve the system.
 
 ### Hybrid System (NEW)
 - **`voice_hybrid.py`** - Main orchestrator with smart engine selection
-- **`elevenlabs_transcriber.py`** - ElevenLabs API client with error handling
+- **`elevenlabs_transcriber.py`** - ElevenLabs API client with .env file support
 - **`whisper_fallback.py`** - Local Whisper integration with lazy loading  
 - **`audio_utils.py`** - Shared audio processing utilities
+- **`.env`** - API key configuration file (create from `.env.example`)
+- **`.env.example`** - Template file for API key setup
 
 ### Legacy System
 - **`voice_daemon.py`** - Background daemon with preloaded Whisper model

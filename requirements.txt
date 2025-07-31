@@ -1,6 +1,7 @@
 # ElevenLabs API
 elevenlabs>=0.2.0
 requests>=2.28.0
+python-dotenv>=1.0.0
 
 # Local Whisper fallback
 faster-whisper>=0.10.0
