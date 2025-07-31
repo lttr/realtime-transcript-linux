@@ -11,6 +11,7 @@ A real-time voice transcription system for Linux that transcribes speech and aut
 
 ## Features
 
+- **Multi-language support** - English and Czech with automatic system detection
 - **Hybrid transcription engine** with ElevenLabs API primary and Whisper fallback
 - **Lightning-fast cloud processing** via ElevenLabs with automatic local fallback
 - **Global keyboard shortcut** integration with GNOME
@@ -205,6 +206,11 @@ Test the hybrid system manually:
 # Stop active recording
 ./voice_hybrid.py stop
 
+# Language management
+./voice_hybrid.py lang          # Show current language
+./voice_hybrid.py lang en       # Set to English  
+./voice_hybrid.py lang cs       # Set to Czech
+
 # Get help
 ./voice_hybrid.py help
 ```
@@ -243,6 +249,29 @@ Check which engines are available:
 
 ## Configuration
 
+### Language Support
+
+The system supports English and Czech transcription:
+
+**Supported Languages:**
+- **English (en)** - Default language, automatically detected from system locale
+- **Czech (cs)** - Full support in both ElevenLabs API and Whisper fallback
+
+**Language Management:**
+```bash
+# Show current language
+./voice_hybrid.py lang
+
+# Set language manually
+./voice_hybrid.py lang en    # English
+./voice_hybrid.py lang cs    # Czech
+```
+
+**Automatic Detection:**
+- System automatically detects language from `LANG`, `LC_ALL`, or `LC_MESSAGES` environment variables
+- Falls back to English if system language is not supported
+- Both ElevenLabs API and Whisper fallback respect the selected language
+
 ### ElevenLabs API Settings
 
 Configure API behavior using `.env` file or environment variables:
@@ -271,19 +300,24 @@ Adjust timeout settings in `elevenlabs_transcriber.py`:
 
 ### Whisper Fallback Settings
 
-The fallback system uses the `tiny.en` model by default. Modify in `whisper_fallback.py`:
+The fallback system uses the multilingual `tiny` model for English and Czech support. Modify in `whisper_fallback.py`:
 
 ```python
 # In WhisperFallback.__init__() method
-self.model_name = "tiny.en"     # Options: tiny.en, base.en, small.en
+self.model_name = "tiny"        # Multilingual model supporting English and Czech
 self.compute_type = "float32"   # Higher precision for better accuracy
 ```
 
 **Model Trade-offs**:
 
-- `tiny.en`: **Current** - Fastest, most reliable, ~39MB
-- `base.en`: Better accuracy, slower, ~74MB  
-- `small.en`: Best accuracy, slowest, ~244MB
+- `tiny`: **Current** - Fastest multilingual model, supports English/Czech, ~39MB
+- `base`: Better accuracy, slower, multilingual, ~74MB  
+- `small`: Best accuracy, slowest, multilingual, ~244MB
+
+**Language Support:**
+- All multilingual models support both English (`en`) and Czech (`cs`)
+- Language is automatically detected or set via command line
+- Performance is consistent across supported languages
 
 ### Audio Processing Settings
 

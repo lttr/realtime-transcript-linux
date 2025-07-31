@@ -24,7 +24,7 @@ class HybridVoiceTranscriber:
         self.stop_flag = {'stop': False}
         self.current_engine = None
         
-        # Setup logging
+        # Setup logging first
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
@@ -34,6 +34,57 @@ class HybridVoiceTranscriber:
             ]
         )
         self.logger = logging.getLogger(__name__)
+        
+        # Language configuration
+        self.supported_languages = {
+            'en': {'name': 'English', 'elevenlabs': 'en', 'whisper': 'en'},
+            'cs': {'name': 'Czech', 'elevenlabs': 'cs', 'whisper': 'cs'}
+        }
+        self.current_language = self._detect_system_language()
+    
+    def _detect_system_language(self):
+        """Detect system language and default to English if not supported"""
+        try:
+            import locale
+            import os
+            
+            # Try environment variables first (more reliable)
+            for env_var in ['LANG', 'LC_ALL', 'LC_MESSAGES']:
+                lang_env = os.getenv(env_var)
+                if lang_env:
+                    lang_code = lang_env.split('_')[0].lower()
+                    if lang_code in self.supported_languages:
+                        self.logger.info(f"Detected system language: {self.supported_languages[lang_code]['name']}")
+                        return lang_code
+                    break
+            
+            # Fall back to locale if env vars don't work
+            try:
+                system_lang = locale.getlocale()[0]
+                if system_lang:
+                    lang_code = system_lang.split('_')[0].lower()
+                    if lang_code in self.supported_languages:
+                        self.logger.info(f"Detected system language: {self.supported_languages[lang_code]['name']}")
+                        return lang_code
+            except:
+                pass
+                
+        except Exception as e:
+            self.logger.debug(f"Could not detect system language: {e}")
+        
+        # Default to English
+        self.logger.info("Defaulting to English language")
+        return 'en'
+    
+    def set_language(self, lang_code: str):
+        """Set transcription language"""
+        if lang_code in self.supported_languages:
+            self.current_language = lang_code
+            self.logger.info(f"Language set to: {self.supported_languages[lang_code]['name']}")
+            return True
+        else:
+            self.logger.error(f"Unsupported language: {lang_code}")
+            return False
     
     def _select_transcription_engine(self):
         """Smart engine selection: Try ElevenLabs first, fallback on failure"""
@@ -105,10 +156,18 @@ class HybridVoiceTranscriber:
             # Start transcription with selected engine
             start_time = time.time()
             
+            # Get language code for the selected engine
+            lang_config = self.supported_languages[self.current_language]
+            if self.current_engine == "elevenlabs":
+                language_code = lang_config['elevenlabs']
+            else:
+                language_code = lang_config['whisper']
+            
             final_text = engine.transcribe_streaming(
                 self.audio_capture,
                 text_callback=self._handle_transcription_result,
-                stop_flag=self.stop_flag
+                stop_flag=self.stop_flag,
+                language=language_code
             )
             
             elapsed = time.time() - start_time
@@ -220,6 +279,21 @@ def main():
                 print(f"  {engine}: {info}")
             sys.exit(0)
         
+        elif command == 'lang':
+            if len(sys.argv) > 2:
+                lang_code = sys.argv[2].lower()
+                if transcriber.set_language(lang_code):
+                    print(f"Language set to: {transcriber.supported_languages[lang_code]['name']}")
+                    sys.exit(0)
+                else:
+                    print(f"Unsupported language: {lang_code}")
+                    print("Supported languages:", ", ".join([f"{k} ({v['name']})" for k, v in transcriber.supported_languages.items()]))
+                    sys.exit(1)
+            else:
+                print(f"Current language: {transcriber.supported_languages[transcriber.current_language]['name']}")
+                print("Supported languages:", ", ".join([f"{k} ({v['name']})" for k, v in transcriber.supported_languages.items()]))
+                sys.exit(0)
+        
         elif command == 'help':
             print("Hybrid Voice Transcription System")
             print("Primary: ElevenLabs API | Fallback: Local Whisper")
@@ -229,7 +303,13 @@ def main():
             print("  voice_hybrid.py ping     - Check system status") 
             print("  voice_hybrid.py stop     - Stop active recording")
             print("  voice_hybrid.py status   - Show engine availability")
+            print("  voice_hybrid.py lang     - Show current language")
+            print("  voice_hybrid.py lang <code> - Set language (en, cs)")
             print("  voice_hybrid.py help     - Show this help")
+            print()
+            print("Languages:")
+            for code, info in transcriber.supported_languages.items():
+                print(f"  {code} - {info['name']}")
             print()
             print("Environment:")
             print("  ELEVENLABS_API_KEY - Required for ElevenLabs API")

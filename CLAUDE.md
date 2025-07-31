@@ -49,6 +49,7 @@ A real-time voice transcription system for Linux GNOME that captures speech via 
 - **Model loading**: Whisper takes 5+ seconds on first load, then instant
 
 #### Technical Features
+- **Multi-language support**: English and Czech with automatic system detection
 - **Natural pause detection**: Dual-threshold VAD distinguishes phrase boundaries from recording end
 - **Streaming transcription**: Processes 2+ second audio chunks on natural speech pauses
 - **Progressive injection**: Injects text as phrases complete, not just at recording end
@@ -76,6 +77,11 @@ A real-time voice transcription system for Linux GNOME that captures speech via 
 
 # Stop active recording
 ./voice_hybrid.py stop
+
+# Language management
+./voice_hybrid.py lang          # Show current language
+./voice_hybrid.py lang en       # Set to English
+./voice_hybrid.py lang cs       # Set to Czech
 
 # View hybrid system logs
 tail -f /tmp/voice_hybrid.log
@@ -160,10 +166,17 @@ Located in `elevenlabs_transcriber.py`:
 
 ### Whisper Fallback Parameters
 Located in `whisper_fallback.py` initialization and `voice_daemon.py`:
-- Model: `tiny.en` (fastest, most reliable for streaming)
+- Model: `tiny` (multilingual model supporting English and Czech)
 - Precision: `float32` (higher accuracy than int8)
 - Search: `beam_size=5, best_of=5` (comprehensive search for quality)
 - Context: `condition_on_previous_text=False` (prevents repetition loops)
+
+### Language Support
+The hybrid system supports English and Czech:
+- **English (en)**: Default language, auto-detected from system locale
+- **Czech (cs)**: Full support in both ElevenLabs API and Whisper fallback
+- **Auto-detection**: System language detected from LANG/LC_ALL environment variables
+- **Manual selection**: Use `./voice_hybrid.py lang <code>` to set language
 
 ### Voice Activity Detection
 Located in `audio_utils.py` AudioCapture class:

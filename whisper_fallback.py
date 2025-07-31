@@ -17,8 +17,8 @@ class WhisperFallback:
         self.model_loaded = False
         self.load_start_time = None
         
-        # Model configuration (same as original daemon)
-        self.model_name = "tiny.en"
+        # Model configuration - switched to multilingual for Czech support
+        self.model_name = "tiny"  # Changed from "tiny.en" to support multiple languages
         self.device = "cpu"
         self.compute_type = "float32"
         
@@ -110,7 +110,7 @@ class WhisperFallback:
             self.logger.error(f"Whisper transcription error: {e}")
             return None
     
-    def transcribe_streaming(self, audio_capture: AudioCapture, text_callback=None, stop_flag=None) -> str:
+    def transcribe_streaming(self, audio_capture: AudioCapture, text_callback=None, stop_flag=None, language: str = "en") -> str:
         """
         Perform streaming transcription with progressive results
         
@@ -118,6 +118,7 @@ class WhisperFallback:
             audio_capture: AudioCapture instance
             text_callback: Function called with each transcribed phrase
             stop_flag: Shared dictionary to signal stop
+            language: Language code for transcription (default: en)
             
         Returns:
             Complete transcribed text
@@ -136,7 +137,7 @@ class WhisperFallback:
                 return
             
             # Transcribe chunk
-            phrase_text = self.transcribe_audio(audio_chunk)
+            phrase_text = self.transcribe_audio(audio_chunk, language)
             
             if phrase_text and phrase_text.strip():
                 full_text += phrase_text + " "
