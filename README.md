@@ -7,42 +7,64 @@ My own voice (@lttr):
 
 ---
 
-A real-time voice transcription system for Linux that transcribes speech and automatically types it into the currently active window. Triggered by a global keyboard shortcut (Ctrl+Shift+Alt+K).
+A real-time voice transcription system for Linux that transcribes speech and automatically types it into the currently active window. Features both cloud-based ElevenLabs API and local Whisper fallback for maximum reliability.
 
 ## Features
 
-- **Real-time transcription** using OpenAI's Whisper model (CPU-optimized)
+- **Hybrid transcription engine** with ElevenLabs API primary and Whisper fallback
+- **Lightning-fast cloud processing** via ElevenLabs with automatic local fallback
 - **Global keyboard shortcut** integration with GNOME
-- **Automatic speech detection** - detects when you start and stop speaking
-- **Lightning-fast responses** - sub-second transcription with preloaded model
-- **Text injection** - automatically types transcribed text into active window
-- **CPU-only operation** - no GPU required
-- **English language optimized** for best performance
+- **Progressive text injection** - types text as you speak, not just at the end
+- **Automatic speech detection** with natural pause boundaries
+- **Smart engine selection** - uses best available transcription method
+- **No audio event noise** - filters out typing, background sounds, etc.
+- **Reliable fallback** - always works even without internet connection
 
 ## How It Works
 
-1. **Background daemon** (`voice_daemon.py`) preloads Whisper model for instant responses
-2. **Trigger script** (`voice_trigger.py`) is called by GNOME keyboard shortcut
-3. Scripts communicate via Unix socket for fast IPC
-4. **Brief microphone access** - only during actual recording (1-10 seconds)
-5. **Preloaded model transcription** - sub-second processing of captured audio
-6. Transcribed text is injected into the active window using `xdotool`
+### Hybrid Architecture (NEW)
+
+The system now uses a smart hybrid approach:
+
+1. **Primary Engine**: ElevenLabs API for fast, cloud-based transcription
+2. **Fallback Engine**: Local Whisper model when API unavailable
+3. **Smart Selection**: Automatically chooses best available engine
+4. **Progressive Injection**: Types text as phrases complete during natural speech pauses
+5. **User Notifications**: Informs when switching to slower local processing
+
+### Transcription Flow
+
+1. **Single script execution** (`voice_hybrid.py`) - no daemon required for ElevenLabs
+2. **Engine selection**: Tests ElevenLabs API availability, falls back to Whisper if needed
+3. **Audio capture**: Records with voice activity detection and natural pause boundaries
+4. **Streaming processing**: Transcribes audio chunks on speech pauses (1.5s boundaries)
+5. **Progressive injection**: Types transcribed phrases immediately via `xdotool`
+6. **Fallback handling**: Seamlessly switches engines with user notification
 
 ## System Requirements
 
 - **OS**: Ubuntu 20.04+ or similar Linux distribution with GNOME
 - **Python**: 3.8+
 - **Audio**: Working microphone
-- **Memory**: At least 1GB RAM available
-- **CPU**: Any modern CPU (optimized for CPU-only operation)
+- **Internet**: Optional (for ElevenLabs API, falls back to local processing)
+- **Memory**: 500MB-1GB RAM (depending on engine used)
+- **CPU**: Any modern CPU (fallback Whisper is CPU-optimized)
 
 ## Performance
 
-- **Startup time**: ~0.4 seconds (model preloading)
-- **Response time**: ~0.3 seconds (after recording completes)
-- **Microphone usage**: Only during 1-10 second recording periods
-- **Memory usage**: ~200MB for preloaded model
-- **CPU usage**: Minimal when idle, brief spike during transcription
+### ElevenLabs API (Primary)
+- **Startup time**: ~0.1 seconds (no model loading)
+- **Response time**: ~1.4-2.1 seconds per phrase
+- **Memory usage**: ~100MB (no local model)
+- **Internet required**: Yes
+- **Accuracy**: Excellent with cloud processing power
+
+### Whisper Fallback (Local)
+- **Startup time**: ~5 seconds (first-time model loading)
+- **Response time**: ~0.3-1.0 seconds per phrase
+- **Memory usage**: ~600MB (preloaded model)
+- **Internet required**: No
+- **Accuracy**: Good for offline processing
 
 ## Installation
 
@@ -69,70 +91,111 @@ cd ~/code/realtime-transcript-linux
 python3 -m venv venv
 source venv/bin/activate
 
-# Install Python dependencies (faster-whisper, PyAudio, numpy)
+# Install Python dependencies (ElevenLabs API, Whisper, PyAudio, numpy)
 pip install -r requirements.txt
 ```
 
-### 3. Make Scripts Executable
+### 3. Configure ElevenLabs API (Recommended)
+
+For best performance, set up ElevenLabs API:
 
 ```bash
-chmod +x voice_daemon.py voice_trigger.py
+# Set your ElevenLabs API key (get from https://elevenlabs.io)
+export ELEVENLABS_API_KEY="your_api_key_here"
+
+# Add to your shell profile for persistence
+echo 'export ELEVENLABS_API_KEY="your_api_key_here"' >> ~/.bashrc
 ```
 
-### 4. Setup Systemd Service (Recommended)
+**Note**: Without API key, system will automatically use local Whisper fallback.
 
-The daemon should run automatically on login:
+### 4. Make Scripts Executable
 
 ```bash
-# Copy service file to user systemd directory
+chmod +x voice_hybrid.py
+```
+
+### 5. Optional: Legacy Daemon Setup
+
+The old daemon-based system is still available but not required for the hybrid system:
+
+```bash
+# Only needed if you want to use the original voice_daemon.py + voice_trigger.py
+chmod +x voice_daemon.py voice_trigger.py
+
+# Setup systemd service (optional)
 mkdir -p ~/.config/systemd/user
 cp voice-transcriber.service ~/.config/systemd/user/
-
-# Enable and start the service
 systemctl --user daemon-reload
 systemctl --user enable voice-transcriber.service
 systemctl --user start voice-transcriber.service
-
-# Check service status
-systemctl --user status voice-transcriber.service
 ```
 
-### 5. Configure GNOME Keyboard Shortcuts
+### 6. Configure GNOME Keyboard Shortcuts
 
-#### Start Recording Shortcut
+#### Hybrid System (Recommended)
 1. Open **Settings** → **Keyboard** → **Keyboard Shortcuts**
 2. Click **"View and Customize Shortcuts"**
 3. Scroll down and click **"Custom Shortcuts"**
 4. Click the **"+"** button to add a new shortcut
 5. Configure the shortcut:
-   - **Name**: `Voice Transcription`
-   - **Command**: `/home/lukas/code/realtime-transcript-linux/voice_trigger.py`
+   - **Name**: `Voice Transcription (Hybrid)`
+   - **Command**: `/home/lukas/code/realtime-transcript-linux/voice_hybrid.py`
    - **Shortcut**: Press `Ctrl+Shift+Alt+K` (or your preferred combination)
 
 #### Stop Recording Shortcut (Optional)
 1. Click the **"+"** button to add another shortcut
 2. Configure the stop shortcut:
    - **Name**: `Stop Voice Recording`
-   - **Command**: `/home/lukas/code/realtime-transcript-linux/voice_trigger.py stop`
+   - **Command**: `/home/lukas/code/realtime-transcript-linux/voice_hybrid.py stop`
    - **Shortcut**: Press `Ctrl+Shift+Alt+S` (or your preferred combination)
+
+#### Legacy System (Optional)
+If you prefer the daemon-based system:
+   - **Name**: `Voice Transcription (Legacy)`
+   - **Command**: `/home/lukas/code/realtime-transcript-linux/voice_trigger.py`
+   - **Shortcut**: Press `Ctrl+Shift+Alt+L` (different key to avoid conflicts)
 
 ## Usage
 
-1. **Start the system**: The daemon should start automatically on login (if using systemd service)
-2. **Press the keyboard shortcut**: `Ctrl+Shift+Alt+K`
-3. **Speak clearly**: The system will show a notification that it's recording
-4. **Stop recording**: Either wait for automatic detection (4 seconds of silence) or press `Ctrl+Shift+Alt+S` to stop immediately
-5. **Text appears**: Transcribed text is automatically typed into the active window
+### Hybrid System (Recommended)
+
+1. **Press the keyboard shortcut**: `Ctrl+Shift+Alt+K`
+2. **Speak clearly**: System shows notification - ElevenLabs API or local processing
+3. **Progressive typing**: Text appears as you speak during natural pauses
+4. **Automatic fallback**: If API fails, system notifies and switches to local Whisper
+5. **Stop recording**: Wait for 4-second silence or press `Ctrl+Shift+Alt+S`
 
 ### Manual Operation
 
-You can also run the components manually for testing:
+Test the hybrid system manually:
+
+```bash
+# Run hybrid transcription
+./voice_hybrid.py
+
+# Check system status  
+./voice_hybrid.py ping
+
+# View engine availability
+./voice_hybrid.py status
+
+# Stop active recording
+./voice_hybrid.py stop
+
+# Get help
+./voice_hybrid.py help
+```
+
+### Legacy System Operation
+
+If using the daemon-based system:
 
 ```bash
 # Start daemon manually (in one terminal)
 ./voice_daemon.py
 
-# Trigger transcription manually (in another terminal)
+# Trigger transcription manually (in another terminal) 
 ./voice_trigger.py
 
 # Check if daemon is running
@@ -142,46 +205,112 @@ You can also run the components manually for testing:
 ./voice_trigger.py stop
 ```
 
-### Updating the Daemon
+### System Status
 
-When you make changes to the daemon code, restart it with:
+Check which engines are available:
 
 ```bash
-# Quick restart after code changes (wait for model to load)
-systemctl --user restart voice-transcriber.service && sleep 5 && ./voice_trigger.py ping
+# Shows ElevenLabs and Whisper availability
+./voice_hybrid.py status
+
+# Example output:
+# Engine Status:
+#   elevenlabs: {'available': True, 'api_key_configured': True}
+#   whisper: {'available': True, 'model_loaded': False}
 ```
 
 ## Configuration
 
-### Whisper Model Selection
+### ElevenLabs API Settings
 
-The system uses the `tiny.en` model by default for reliable performance. You can change this in `voice_daemon.py`:
+Configure API behavior by setting environment variables:
+
+```bash
+# Required: Your API key from https://elevenlabs.io
+export ELEVENLABS_API_KEY="your_api_key_here"
+
+# Optional: Adjust timeout settings in elevenlabs_transcriber.py
+# - api_timeout: 8.0 seconds (transcription request timeout)
+# - quick_test_timeout: 3.0 seconds (connectivity test timeout)  
+# - max_retries: 2 attempts (retry count for failed requests)
+```
+
+### Whisper Fallback Settings
+
+The fallback system uses the `tiny.en` model by default. Modify in `whisper_fallback.py`:
 
 ```python
-# In _init_whisper_model() method
-self.whisper_model = WhisperModel(
-    "tiny.en",    # Options: tiny.en, base.en, small.en
-    # ... other settings
-)
+# In WhisperFallback.__init__() method
+self.model_name = "tiny.en"     # Options: tiny.en, base.en, small.en
+self.compute_type = "float32"   # Higher precision for better accuracy
 ```
 
 **Model Trade-offs**:
 
 - `tiny.en`: **Current** - Fastest, most reliable, ~39MB
-- `base.en`: Better accuracy but may have issues with chunking, ~74MB
-- `small.en`: Better accuracy, slower, ~244MB
+- `base.en`: Better accuracy, slower, ~74MB  
+- `small.en`: Best accuracy, slowest, ~244MB
 
-### Voice Activity Detection
+### Audio Processing Settings
 
-Adjust speech detection sensitivity in `voice_daemon.py`:
+Adjust speech detection in `audio_utils.py`:
 
 ```python
-# In _init_recorder() method
-vad_filter_min_silence_duration=500,  # ms of silence to stop (default: 500)
-post_speech_silence_duration=0.2,     # seconds (default: 0.2)
+# In AudioCapture.__init__() method
+self.silence_threshold = 50              # Volume threshold for speech detection
+self.short_pause_frames = 1.5 * sample_rate  # 1.5s = phrase boundary
+self.long_pause_frames = 4.0 * sample_rate   # 4.0s = end recording
+self.min_phrase_frames = 2.0 * sample_rate   # 2.0s minimum phrase length
+```
+
+### Hybrid Engine Priority
+
+The system prioritizes engines in this order:
+
+1. **ElevenLabs API** (if API key available and API reachable)
+2. **Whisper Fallback** (if ElevenLabs unavailable)
+3. **Error** (if both engines fail)
+
+Disable ElevenLabs by removing/unsetting the API key:
+```bash
+unset ELEVENLABS_API_KEY  # Forces Whisper-only mode
 ```
 
 ## Troubleshooting
+
+### Hybrid System Issues
+
+1. **Check system status**:
+   ```bash
+   ./voice_hybrid.py ping
+   ./voice_hybrid.py status
+   ```
+
+2. **ElevenLabs API not working**:
+   ```bash
+   # Check API key
+   echo $ELEVENLABS_API_KEY
+   
+   # Test API connectivity
+   curl -H "xi-api-key: $ELEVENLABS_API_KEY" \
+        https://api.elevenlabs.io/v1/models
+   ```
+
+3. **Whisper fallback not loading**:
+   ```bash
+   # Check dependencies
+   pip list | grep faster-whisper
+   
+   # Run with verbose logging
+   ./voice_hybrid.py 2>&1 | grep -i whisper
+   ```
+
+4. **View logs**:
+   ```bash
+   tail -f /tmp/voice_hybrid.log
+   ```
+
+### Legacy Daemon Issues
 
 ### Daemon Won't Start
 
@@ -273,7 +402,41 @@ rm -rf ~/realtime-transcript-linux
 
 Feel free to submit issues and pull requests to improve the system.
 
+## Architecture Files
+
+### Hybrid System (NEW)
+- **`voice_hybrid.py`** - Main orchestrator with smart engine selection
+- **`elevenlabs_transcriber.py`** - ElevenLabs API client with error handling
+- **`whisper_fallback.py`** - Local Whisper integration with lazy loading  
+- **`audio_utils.py`** - Shared audio processing utilities
+
+### Legacy System
+- **`voice_daemon.py`** - Background daemon with preloaded Whisper model
+- **`voice_trigger.py`** - Lightweight client for daemon communication
+- **`voice-transcriber.service`** - Systemd service configuration
+
+### Shared
+- **`requirements.txt`** - Combined dependencies for both systems
+- **Test scripts** - `test_audio.py`, `test_setup.py` for system validation
+
+## Recent Changes
+
+### v2.0 - Hybrid Architecture (Latest)
+- ✅ **ElevenLabs API integration** for cloud-based transcription
+- ✅ **Smart fallback system** with automatic Whisper backup
+- ✅ **Progressive text injection** during natural speech pauses
+- ✅ **No audio event descriptions** (configurable via API)
+- ✅ **Modular architecture** with separated concerns
+- ✅ **Single-script execution** (no daemon required for API mode)
+- ✅ **Enhanced error handling** with retry logic and user notifications
+
+### v1.0 - Daemon-Based System (Legacy)
+- ✅ **Local Whisper processing** with preloaded models
+- ✅ **Unix socket IPC** for fast daemon communication
+- ✅ **Systemd service integration** for automatic startup
+- ✅ **Voice activity detection** with natural pause boundaries
+
 ## License
 
-This project uses the RealtimeSTT library and follows its licensing terms.
+This project uses the faster-whisper library and ElevenLabs API, following their respective licensing terms.
 
