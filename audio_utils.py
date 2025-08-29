@@ -1,5 +1,6 @@
 #!/home/lukas/code/realtime-transcript-linux/venv/bin/python
 
+import os
 import pyaudio
 import numpy as np
 import logging
@@ -58,9 +59,26 @@ class AudioCapture:
             phrase_start_idx = 0  # Track where current phrase started in all_frames
             
             for frame_count in range(max_frames):
-                # Check external stop flag
+                # Check external stop flag (in-process)
                 if stop_flag and stop_flag.get('stop', False):
                     self.logger.info("🛑 Recording stopped by external signal")
+                    # Process any remaining audio immediately when stopped externally
+                    if phrase_frames and recording_started and callback:
+                        self.logger.info("📤 Processing remaining audio from external stop")
+                        audio_chunk = self._frames_to_numpy(phrase_frames)
+                        callback(audio_chunk)
+                        phrase_frames = []  # Clear to avoid double processing
+                    break
+                
+                # Check external stop file (inter-process)
+                if os.path.exists("/tmp/voice_hybrid_stop.flag"):
+                    self.logger.info("🛑 Recording stopped by external command")
+                    # Process any remaining audio immediately when stopped externally
+                    if phrase_frames and recording_started and callback:
+                        self.logger.info("📤 Processing remaining audio from external stop")
+                        audio_chunk = self._frames_to_numpy(phrase_frames)
+                        callback(audio_chunk)
+                        phrase_frames = []  # Clear to avoid double processing
                     break
                 
                 try:

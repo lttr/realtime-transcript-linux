@@ -23,6 +23,7 @@ class HybridVoiceTranscriber:
         # Transcription state
         self.stop_flag = {'stop': False}
         self.current_engine = None
+        self.stop_file = "/tmp/voice_hybrid_stop.flag"
         
         # Setup logging first
         logging.basicConfig(
@@ -151,8 +152,10 @@ class HybridVoiceTranscriber:
                 )
         
         try:
-            # Reset stop flag
+            # Reset stop flag and remove any existing stop file
             self.stop_flag['stop'] = False
+            if os.path.exists(self.stop_file):
+                os.remove(self.stop_file)
             
             # Start transcription with selected engine
             start_time = time.time()
@@ -226,8 +229,15 @@ class HybridVoiceTranscriber:
     def stop_recording(self):
         """Stop active recording session"""
         print("Stopping recording...")
-        self.stop_flag['stop'] = True
-        self.notification.show_notification("🛑 Recording stopped", urgency="normal")
+        # Create stop file for inter-process communication
+        try:
+            with open(self.stop_file, 'w') as f:
+                f.write(str(time.time()))
+            self.stop_flag['stop'] = True
+            self.notification.show_notification("🛑 Recording stopped", urgency="normal")
+        except Exception as e:
+            print(f"Error creating stop file: {e}")
+            self.stop_flag['stop'] = True
     
     def get_engine_status(self):
         """Get status of available transcription engines"""
