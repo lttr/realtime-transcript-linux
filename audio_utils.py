@@ -55,6 +55,7 @@ class AudioCapture:
             silence_frames = 0
             recording_started = False
             max_frames = int(self.sample_rate / self.chunk_size * max_duration)
+            phrase_start_idx = 0  # Track where current phrase started in all_frames
             
             for frame_count in range(max_frames):
                 # Check external stop flag
@@ -77,6 +78,8 @@ class AudioCapture:
                 if volume > self.silence_threshold:
                     if not recording_started:
                         self.logger.info(f"🎙️ Speech detected!")
+                        # Mark start of first phrase
+                        phrase_start_idx = len(all_frames) - len(phrase_frames)
                     recording_started = True
                     silence_frames = 0
                 elif recording_started:
@@ -87,11 +90,13 @@ class AudioCapture:
                         len(phrase_frames) >= self.min_phrase_frames):
                         
                         if callback:
+                            # Send only the clean phrase audio (without overlap)
                             audio_chunk = self._frames_to_numpy(phrase_frames)
                             callback(audio_chunk)
                         
-                        # Reset for next phrase
+                        # Reset for next phrase - start fresh from current position
                         phrase_frames = []
+                        phrase_start_idx = len(all_frames)  # Next phrase starts here
                     
                     # Long pause = end recording
                     elif silence_frames > self.long_pause_frames:
@@ -113,6 +118,7 @@ class AudioCapture:
         if phrase_frames and recording_started:
             final_min_frames = int(self.sample_rate / self.chunk_size * 0.3)  # 0.3s minimum
             if len(phrase_frames) >= final_min_frames and callback:
+                # Send only the clean remaining phrase audio
                 audio_chunk = self._frames_to_numpy(phrase_frames)
                 callback(audio_chunk)
         
