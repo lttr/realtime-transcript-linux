@@ -89,7 +89,7 @@ def main():
     print("\n" + "=" * 50)
     if success:
         print("✓ Audio system is working correctly!")
-        print("The voice transcription daemon should work properly.")
+        print("The voice transcription system should work properly.")
     else:
         print("✗ Audio system has issues that need to be resolved.")
 

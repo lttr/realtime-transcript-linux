@@ -6,32 +6,28 @@ import logging
 import time
 from audio_utils import AudioCapture, NotificationHelper, TextInjector
 from elevenlabs_transcriber import ElevenLabsTranscriber
-from whisper_fallback import WhisperFallback
 
 
-class HybridVoiceTranscriber:
-    """Hybrid voice transcription system with ElevenLabs primary and Whisper fallback"""
+class VoiceTranscriber:
+    """ElevenLabs voice transcription system with instance locking"""
     
     def __init__(self):
         self.audio_capture = AudioCapture()
-        # Use optimistic mode - skip availability check, just try API directly
         self.elevenlabs = ElevenLabsTranscriber(skip_availability_check=True)
-        self.whisper = WhisperFallback()
         self.text_injector = TextInjector()
         self.notification = NotificationHelper()
         
         # Transcription state
         self.stop_flag = {'stop': False}
-        self.current_engine = None
-        self.stop_file = "/tmp/voice_hybrid_stop.flag"
-        self.lock_file = "/tmp/voice_hybrid.pid"
+        self.stop_file = "/tmp/voice_transcription_stop.flag"
+        self.lock_file = "/tmp/voice_transcription.pid"
         
         # Setup logging first
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler('/tmp/voice_hybrid.log'),
+                logging.FileHandler('/tmp/voice_transcription.log'),
                 logging.StreamHandler()
             ]
         )
@@ -39,9 +35,9 @@ class HybridVoiceTranscriber:
         
         # Language configuration
         self.supported_languages = {
-            'auto': {'name': 'Auto-detect', 'elevenlabs': None, 'whisper': None},
-            'en': {'name': 'English', 'elevenlabs': 'en', 'whisper': 'en'},
-            'cs': {'name': 'Czech', 'elevenlabs': 'cs', 'whisper': 'cs'}
+            'auto': {'name': 'Auto-detect', 'code': None},
+            'en': {'name': 'English', 'code': 'en'},
+            'cs': {'name': 'Czech', 'code': 'cs'}
         }
         self.current_language = self._detect_system_language()
     
@@ -89,30 +85,17 @@ class HybridVoiceTranscriber:
             self.logger.error(f"Unsupported language: {lang_code}")
             return False
     
-    def _select_transcription_engine(self):
-        """Smart engine selection: Try ElevenLabs first, fallback on failure"""
+    def _check_api_availability(self):
+        """Check if ElevenLabs API is available"""
+        if not self.elevenlabs.api_key:
+            self.logger.error("❌ ElevenLabs API key not configured")
+            return False
         
-        # Always try ElevenLabs first if API key is configured
-        if self.elevenlabs.api_key:
-            self.logger.info("🌐 Attempting ElevenLabs API transcription")
-            self.current_engine = "elevenlabs"
-            return self.elevenlabs
+        if not self.elevenlabs.is_available():
+            self.logger.error("❌ ElevenLabs API not available")
+            return False
         
-        # No API key - use Whisper directly
-        if self.whisper.is_available():
-            self.logger.info("🔄 No API key configured, using Whisper")
-            self.notification.show_notification(
-                "🔄 Using local processing (no API key)", 
-                urgency="normal", 
-                expire_time="2000"
-            )
-            self.current_engine = "whisper"
-            return self.whisper
-        
-        # No engines available
-        self.logger.error("❌ No transcription engines available")
-        self.current_engine = None
-        return None
+        return True
     
     def _handle_transcription_result(self, phrase_text, full_text):
         """Handle partial transcription results with progressive injection"""
@@ -168,51 +151,38 @@ class HybridVoiceTranscriber:
             self.logger.error(f"Lock release error: {e}")
     
     def transcribe(self):
-        """Main transcription method with smart engine selection"""
+        """Main transcription method using ElevenLabs API"""
         
         # Acquire instance lock first
         if not self._acquire_lock():
             return False
         
         try:
-            print("Starting hybrid voice transcription...")
+            print("Starting voice transcription...")
             
-            # Select best available engine
-            engine = self._select_transcription_engine()
-            if not engine:
+            # Check API availability
+            if not self._check_api_availability():
                 self.notification.show_notification(
-                    "❌ No transcription engines available", 
+                    "❌ ElevenLabs API not available", 
                     urgency="critical"
                 )
                 return False
             
             # Show initial notification
-            if self.current_engine == "elevenlabs":
-                self.notification.show_notification("🎤 Recording with ElevenLabs", urgency="normal")
-            else:
-                # For Whisper, show loading notification if model needs to load
-                if not self.whisper.model_loaded:
-                    self.notification.show_notification(
-                        "⏳ Loading local model (first time)", 
-                        urgency="normal", 
-                        expire_time="8000"
-                    )
+            self.notification.show_notification("🎤 Recording with ElevenLabs", urgency="normal")
+            
             # Reset stop flag and remove any existing stop file
             self.stop_flag['stop'] = False
             if os.path.exists(self.stop_file):
                 os.remove(self.stop_file)
             
-            # Start transcription with selected engine
+            # Start transcription with ElevenLabs
             start_time = time.time()
             
-            # Get language code for the selected engine
-            lang_config = self.supported_languages[self.current_language]
-            if self.current_engine == "elevenlabs":
-                language_code = lang_config['elevenlabs']
-            else:
-                language_code = lang_config['whisper']
+            # Get language code
+            language_code = self.supported_languages[self.current_language]['code']
             
-            final_text = engine.transcribe_streaming(
+            final_text = self.elevenlabs.transcribe_streaming(
                 self.audio_capture,
                 text_callback=self._handle_transcription_result,
                 stop_flag=self.stop_flag,
@@ -224,7 +194,6 @@ class HybridVoiceTranscriber:
             # Handle final result
             if final_text.strip():
                 print(f"✅ Transcription complete ({elapsed:.1f}s): '{final_text}'")
-                print(f"Engine used: {self.current_engine}")
                 return True
             else:
                 print("No speech detected")
@@ -238,33 +207,6 @@ class HybridVoiceTranscriber:
         
         except Exception as e:
             self.logger.error(f"Transcription error: {e}")
-            
-            # Try fallback if primary engine failed
-            if self.current_engine == "elevenlabs" and self.whisper.is_available():
-                self.logger.info("🔄 Trying Whisper fallback after ElevenLabs error")
-                self.notification.show_notification(
-                    "🔄 API failed, trying local processing", 
-                    urgency="normal"
-                )
-                
-                try:
-                    self.current_engine = "whisper"
-                    self.stop_flag['stop'] = False  # Reset for retry
-                    
-                    final_text = self.whisper.transcribe_streaming(
-                        self.audio_capture,
-                        text_callback=self._handle_transcription_result,
-                        stop_flag=self.stop_flag
-                    )
-                    
-                    if final_text.strip():
-                        print(f"✅ Fallback transcription successful: '{final_text}'")
-                        return True
-                    
-                except Exception as fallback_error:
-                    self.logger.error(f"Fallback transcription also failed: {fallback_error}")
-            
-            # All engines failed
             self.notification.show_notification(
                 "❌ Transcription failed", 
                 urgency="critical"
@@ -289,104 +231,78 @@ class HybridVoiceTranscriber:
             self.stop_flag['stop'] = True
     
     def get_engine_status(self):
-        """Get status of available transcription engines"""
+        """Get status of ElevenLabs transcription engine"""
         status = {
             'elevenlabs': {
                 'available': self.elevenlabs.is_available(),
                 'api_key_configured': bool(self.elevenlabs.api_key)
-            },
-            'whisper': {
-                'available': self.whisper.is_available(),
-                'model_loaded': self.whisper.model_loaded
             }
         }
-        
         return status
     
-    def ping(self):
-        """Health check for the transcription system"""
+    def print_status(self):
+        """Print current system status"""
+        print("Engine Status:")
         status = self.get_engine_status()
         
-        if status['elevenlabs']['available'] or status['whisper']['available']:
-            print("✅ Hybrid transcription system is ready")
-            print(f"ElevenLabs: {'✅' if status['elevenlabs']['available'] else '❌'}")
-            print(f"Whisper: {'✅' if status['whisper']['available'] else '❌'}")
+        for engine, info in status.items():
+            print(f"  {engine}: {info}")
+        
+        if status['elevenlabs']['available']:
+            print("Status: Ready")
+        else:
+            print("Status: Not ready - check API configuration")
+    
+    def ping_test(self):
+        """Test connectivity to transcription service"""
+        print("Testing ElevenLabs API connectivity...")
+        
+        if self.elevenlabs.is_available():
+            print("✅ ElevenLabs API: Connected")
             return True
         else:
-            print("❌ No transcription engines available")
+            print("❌ ElevenLabs API: Connection failed")
             return False
 
 
 def main():
-    transcriber = HybridVoiceTranscriber()
+    if len(sys.argv) < 2:
+        # Default: start transcription
+        transcriber = VoiceTranscriber()
+        transcriber.transcribe()
+        return
     
-    # Handle command line arguments
-    if len(sys.argv) > 1:
-        command = sys.argv[1].lower()
-        
-        if command == 'ping':
-            success = transcriber.ping()
-            sys.exit(0 if success else 1)
-        
-        elif command == 'stop':
-            transcriber.stop_recording()
-            sys.exit(0)
-        
-        elif command == 'status':
-            status = transcriber.get_engine_status()
-            print("Engine Status:")
-            for engine, info in status.items():
-                print(f"  {engine}: {info}")
-            sys.exit(0)
-        
-        elif command == 'lang':
-            if len(sys.argv) > 2:
-                lang_code = sys.argv[2].lower()
-                if transcriber.set_language(lang_code):
-                    print(f"Language set to: {transcriber.supported_languages[lang_code]['name']}")
-                    sys.exit(0)
-                else:
-                    print(f"Unsupported language: {lang_code}")
-                    print("Supported languages:", ", ".join([f"{k} ({v['name']})" for k, v in transcriber.supported_languages.items()]))
-                    sys.exit(1)
+    command = sys.argv[1].lower()
+    transcriber = VoiceTranscriber()
+    
+    if command == "status":
+        transcriber.print_status()
+    elif command == "ping":
+        transcriber.ping_test()
+    elif command == "stop":
+        transcriber.stop_recording()
+    elif command == "lang":
+        if len(sys.argv) > 2:
+            lang = sys.argv[2].lower()
+            if transcriber.set_language(lang):
+                print(f"Language set to: {transcriber.supported_languages[lang]['name']}")
             else:
-                print(f"Current language: {transcriber.supported_languages[transcriber.current_language]['name']}")
-                print("Supported languages:", ", ".join([f"{k} ({v['name']})" for k, v in transcriber.supported_languages.items()]))
-                sys.exit(0)
-        
-        elif command == 'help':
-            print("Hybrid Voice Transcription System")
-            print("Primary: ElevenLabs API | Fallback: Local Whisper")
-            print()
-            print("Usage:")
-            print("  voice_hybrid.py          - Start transcription")
-            print("  voice_hybrid.py ping     - Check system status") 
-            print("  voice_hybrid.py stop     - Stop active recording")
-            print("  voice_hybrid.py status   - Show engine availability")
-            print("  voice_hybrid.py lang     - Show current language")
-            print("  voice_hybrid.py lang <code> - Set language (auto, en, cs)")
-            print("  voice_hybrid.py help     - Show this help")
-            print()
-            print("Languages:")
-            for code, info in transcriber.supported_languages.items():
-                print(f"  {code} - {info['name']}")
-            print()
-            print("Environment:")
-            print("  ELEVENLABS_API_KEY - Required for ElevenLabs API")
-            sys.exit(0)
-        
+                print(f"Unsupported language: {lang}")
+                print(f"Supported: {', '.join(transcriber.supported_languages.keys())}")
         else:
-            print(f"Unknown command: {command}")
-            print("Use 'voice_hybrid.py help' for usage information")
-            sys.exit(1)
-    
-    # Default action: transcribe
-    try:
-        success = transcriber.transcribe()
-        sys.exit(0 if success else 1)
-    except KeyboardInterrupt:
-        print("\n🛑 Interrupted by user")
-        sys.exit(130)  # Standard exit code for Ctrl+C
+            current = transcriber.current_language
+            print(f"Current language: {transcriber.supported_languages[current]['name']} ({current})")
+            print("Available languages:")
+            for code, info in transcriber.supported_languages.items():
+                print(f"  {code}: {info['name']}")
+    else:
+        print("Usage:")
+        print("  ./voice_transcription.py         # Start transcription")
+        print("  ./voice_transcription.py status  # Show system status")
+        print("  ./voice_transcription.py ping    # Test API connectivity")
+        print("  ./voice_transcription.py stop    # Stop active recording")
+        print("  ./voice_transcription.py lang    # Show current language")
+        print("  ./voice_transcription.py lang <code>  # Set language (auto/en/cs)")
 
 
 if __name__ == "__main__":

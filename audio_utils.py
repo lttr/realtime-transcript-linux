@@ -71,7 +71,7 @@ class AudioCapture:
                     break
                 
                 # Check external stop file (inter-process)
-                if os.path.exists("/tmp/voice_hybrid_stop.flag"):
+                if os.path.exists("/tmp/voice_transcription_stop.flag"):
                     self.logger.info("🛑 Recording stopped by external command")
                     # Process any remaining audio immediately when stopped externally
                     if phrase_frames and recording_started and callback:

@@ -40,27 +40,21 @@ def test_python_dependencies():
     return True
 
 def test_basic_functionality():
-    print("\n=== Testing Basic Functionality ===")
+    print("\n=== Testing Basic Audio Setup ===")
     
     try:
-        # Test socket creation
-        import socket
-        import os
+        # Test pyaudio import
+        import pyaudio
+        print("✓ PyAudio: WORKING")
         
-        test_socket = "/tmp/test_voice_transcriber.sock"
-        if os.path.exists(test_socket):
-            os.unlink(test_socket)
+        # Test numpy import  
+        import numpy
+        print("✓ NumPy: WORKING")
         
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.bind(test_socket)
-        sock.close()
-        os.unlink(test_socket)
-        
-        print("✓ Unix socket: WORKING")
         return True
         
     except Exception as e:
-        print(f"✗ Unix socket: ERROR - {e}")
+        print(f"✗ Basic functionality: ERROR - {e}")
         return False
 
 def main():
@@ -69,15 +63,15 @@ def main():
     
     test_system_dependencies()
     deps_ok = test_python_dependencies()
-    socket_ok = test_basic_functionality()
+    basic_ok = test_basic_functionality()
     
     print("\n=== Summary ===")
-    if deps_ok and socket_ok:
+    if deps_ok and basic_ok:
         print("✓ Basic setup looks good!")
         print("Next steps:")
-        print("1. Ensure RealtimeSTT is fully installed: pip install -r requirements.txt")
-        print("2. Test the daemon: ./voice_daemon.py")
-        print("3. Test the trigger: ./voice_trigger.py ping")
+        print("1. Configure API key: cp .env.example .env && edit .env")
+        print("2. Test the system: ./voice_transcription.py status")
+        print("3. Test transcription: ./voice_transcription.py")
     else:
         print("✗ Some issues found. Please resolve them before proceeding.")
 

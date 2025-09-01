@@ -3,9 +3,6 @@ elevenlabs>=0.2.0
 requests>=2.28.0
 python-dotenv>=1.0.0
 
-# Local Whisper fallback
-faster-whisper>=0.10.0
-
-# Shared audio processing
+# Audio processing
 PyAudio>=0.2.11
 numpy>=1.21.0
