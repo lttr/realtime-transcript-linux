@@ -24,6 +24,7 @@ class HybridVoiceTranscriber:
         self.stop_flag = {'stop': False}
         self.current_engine = None
         self.stop_file = "/tmp/voice_hybrid_stop.flag"
+        self.lock_file = "/tmp/voice_hybrid.pid"
         
         # Setup logging first
         logging.basicConfig(
@@ -125,33 +126,77 @@ class HybridVoiceTranscriber:
             else:
                 print(f"✗ Failed to inject: '{phrase_text}'")
     
+    def _acquire_lock(self):
+        """Acquire instance lock to prevent multiple simultaneous recordings"""
+        try:
+            if os.path.exists(self.lock_file):
+                # Check if existing PID is still running
+                with open(self.lock_file, 'r') as f:
+                    old_pid = int(f.read().strip())
+                
+                try:
+                    # Check if process is still running
+                    os.kill(old_pid, 0)
+                    # Process exists - another instance is running
+                    self.logger.info("🔒 Another transcription session is already active")
+                    self.notification.show_notification(
+                        "🔒 Voice transcription already in progress", 
+                        urgency="normal"
+                    )
+                    return False
+                except (OSError, ProcessLookupError):
+                    # Process doesn't exist - stale lock file
+                    self.logger.info("🧹 Removing stale lock file")
+                    os.remove(self.lock_file)
+            
+            # Write current PID to lock file
+            with open(self.lock_file, 'w') as f:
+                f.write(str(os.getpid()))
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Lock acquisition error: {e}")
+            return False
+    
+    def _release_lock(self):
+        """Release instance lock"""
+        try:
+            if os.path.exists(self.lock_file):
+                os.remove(self.lock_file)
+        except Exception as e:
+            self.logger.error(f"Lock release error: {e}")
+    
     def transcribe(self):
         """Main transcription method with smart engine selection"""
         
-        print("Starting hybrid voice transcription...")
-        
-        # Select best available engine
-        engine = self._select_transcription_engine()
-        if not engine:
-            self.notification.show_notification(
-                "❌ No transcription engines available", 
-                urgency="critical"
-            )
+        # Acquire instance lock first
+        if not self._acquire_lock():
             return False
         
-        # Show initial notification
-        if self.current_engine == "elevenlabs":
-            self.notification.show_notification("🎤 Recording with ElevenLabs", urgency="normal")
-        else:
-            # For Whisper, show loading notification if model needs to load
-            if not self.whisper.model_loaded:
-                self.notification.show_notification(
-                    "⏳ Loading local model (first time)", 
-                    urgency="normal", 
-                    expire_time="8000"
-                )
-        
         try:
+            print("Starting hybrid voice transcription...")
+            
+            # Select best available engine
+            engine = self._select_transcription_engine()
+            if not engine:
+                self.notification.show_notification(
+                    "❌ No transcription engines available", 
+                    urgency="critical"
+                )
+                return False
+            
+            # Show initial notification
+            if self.current_engine == "elevenlabs":
+                self.notification.show_notification("🎤 Recording with ElevenLabs", urgency="normal")
+            else:
+                # For Whisper, show loading notification if model needs to load
+                if not self.whisper.model_loaded:
+                    self.notification.show_notification(
+                        "⏳ Loading local model (first time)", 
+                        urgency="normal", 
+                        expire_time="8000"
+                    )
             # Reset stop flag and remove any existing stop file
             self.stop_flag['stop'] = False
             if os.path.exists(self.stop_file):
@@ -225,6 +270,10 @@ class HybridVoiceTranscriber:
                 urgency="critical"
             )
             return False
+        
+        finally:
+            # Always release the lock
+            self._release_lock()
     
     def stop_recording(self):
         """Stop active recording session"""
