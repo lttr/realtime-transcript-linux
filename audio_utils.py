@@ -249,6 +249,28 @@ class TextInjector:
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+        
+        # Only very short filler words - conservative list
+        self.filler_words = {'uh', 'um', 'er', 'ah', 'eh', 'uhm', 'hmm', 'hm', 'mm'}
+    
+    def _clean_filler_words(self, text):
+        """Remove short filler words from text"""
+        import re
+        
+        # Simple approach: remove filler words with word boundaries
+        pattern = r'\b(' + '|'.join(re.escape(word) for word in self.filler_words) + r')\b'
+        
+        # Remove filler words (case insensitive)
+        result = re.sub(pattern, '', text, flags=re.IGNORECASE)
+        
+        # Clean up extra spaces and punctuation issues
+        result = re.sub(r'\s+', ' ', result)  # Multiple spaces to single space
+        result = re.sub(r'\s*,\s*,\s*', ', ', result)  # Double commas
+        result = re.sub(r'^[,\s]+', '', result)  # Leading comma/space
+        result = re.sub(r'[,\s]+$', '', result)  # Trailing comma/space
+        result = re.sub(r'\s+([,.!?;:])', r'\1', result)  # Remove space before punctuation
+        
+        return result.strip()
     
     def inject_text(self, text):
         """Inject text into the currently active window using xdotool"""
@@ -257,6 +279,11 @@ class TextInjector:
         
         try:
             if not text.strip():
+                return False
+            
+            # Clean filler words from text
+            cleaned_text = self._clean_filler_words(text)
+            if not cleaned_text.strip():
                 return False
             
             # Check if xdotool is available
@@ -270,7 +297,7 @@ class TextInjector:
             time.sleep(0.1)
             
             # Check for "just enter" command
-            just_enter_match = re.search(r'(.*)just\s+enter[.\s]*$', text.strip(), re.IGNORECASE)
+            just_enter_match = re.search(r'(.*)just\s+enter[.\s]*$', cleaned_text.strip(), re.IGNORECASE)
             if just_enter_match:
                 # Type preceding text and press Enter
                 preceding_text = just_enter_match.group(1).strip()
@@ -280,8 +307,8 @@ class TextInjector:
                     subprocess.run(['xdotool', 'type', '--delay', '0', "(enter)"], check=True)
                 subprocess.run(['xdotool', 'key', 'Return'], check=True)
             else:
-                # Type the text normally
-                subprocess.run(['xdotool', 'type', '--delay', '0', text], check=True)
+                # Type the cleaned text normally
+                subprocess.run(['xdotool', 'type', '--delay', '0', cleaned_text], check=True)
             
             return True
             
