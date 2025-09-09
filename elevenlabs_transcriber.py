@@ -131,12 +131,55 @@ class ElevenLabsTranscriber:
         else:
             wav_data = audio_data
         
-        # Check minimum audio length (avoid API calls for tiny clips)
-        if len(wav_data) < 8000:  # Rough check for very short audio
-            self.logger.info("Audio too short for transcription")
+        # Check minimum audio length and quality (avoid API calls for tiny/silent clips)
+        # WAV header is ~44 bytes + actual audio data
+        # For 16kHz 16-bit audio: ~32KB per second
+        audio_size_kb = len(wav_data) / 1024
+        
+        # Skip very small audio files (less than 0.5s)
+        if len(wav_data) < 16000:  # ~0.5 seconds of audio + headers
+            self.logger.info(f"Audio too short for transcription ({audio_size_kb:.1f}KB < ~16KB minimum)")
             return ""
         
+        # For medium-sized segments, check if they're mostly silence
+        if len(wav_data) < 64000:  # Less than ~2 seconds
+            if self._is_mostly_silent(audio_data if isinstance(audio_data, np.ndarray) else wav_data):
+                self.logger.info(f"Audio mostly silent ({audio_size_kb:.1f}KB) - skipping to avoid empty response")
+                return ""
+        
         return self._transcribe_with_retry(wav_data, language)
+    
+    def _is_mostly_silent(self, audio_data) -> bool:
+        """Check if audio data is mostly silence by analyzing volume levels"""
+        try:
+            if isinstance(audio_data, bytes):
+                # Skip WAV header (assume first 44 bytes) and convert to numpy
+                audio_bytes = audio_data[44:] if len(audio_data) > 44 else audio_data
+                audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+            else:
+                audio_np = audio_data
+            
+            if len(audio_np) == 0:
+                return True
+            
+            # Calculate RMS volume and peak volume
+            rms = np.sqrt(np.mean(audio_np**2))
+            peak = np.max(np.abs(audio_np))
+            
+            # Threshold for silence detection (quite conservative)
+            silence_threshold_rms = 0.01  # 1% of full scale
+            silence_threshold_peak = 0.05  # 5% of full scale
+            
+            is_silent = rms < silence_threshold_rms and peak < silence_threshold_peak
+            
+            if is_silent:
+                self.logger.debug(f"Audio silence check: RMS={rms:.4f}, Peak={peak:.4f} - considered silent")
+            
+            return is_silent
+            
+        except Exception as e:
+            self.logger.debug(f"Silence detection error: {e}, assuming not silent")
+            return False
     
     def _transcribe_with_retry(self, wav_data: bytes, language: str) -> Optional[str]:
         """Transcribe with retry logic and error handling"""
@@ -144,6 +187,8 @@ class ElevenLabsTranscriber:
         for attempt in range(self.max_retries + 1):
             try:
                 start_time = time.time()
+                audio_size_kb = len(wav_data) / 1024
+                self.logger.info(f"Sending {audio_size_kb:.1f}KB audio to ElevenLabs API (attempt {attempt + 1})")
                 
                 # Prepare request
                 files = {
@@ -178,40 +223,40 @@ class ElevenLabsTranscriber:
                     result = response.json()
                     text = result.get('text', '').strip()
                     
-                    self.logger.info(f"ElevenLabs transcription successful ({elapsed:.1f}s): '{text[:50]}{'...' if len(text) > 50 else ''}'")
+                    self.logger.info(f"ElevenLabs API response received ({elapsed:.1f}s): '{text[:50]}{'...' if len(text) > 50 else ''}'")
                     return text
                 
                 elif response.status_code == 429:  # Rate limited
-                    self.logger.warning(f"Rate limited (attempt {attempt + 1})")
+                    self.logger.warning(f"ElevenLabs API rate limited after {elapsed:.1f}s (attempt {attempt + 1})")
                     if attempt < self.max_retries:
                         time.sleep(self.retry_delay * (attempt + 1))
                         continue
                     return None
                 
                 elif response.status_code == 401:  # Authentication error
-                    self.logger.error("Authentication failed - check API key")
+                    self.logger.error(f"ElevenLabs API authentication failed after {elapsed:.1f}s - check API key")
                     return None
                 
                 elif response.status_code >= 500:  # Server error
-                    self.logger.warning(f"Server error {response.status_code} (attempt {attempt + 1})")
+                    self.logger.warning(f"ElevenLabs API server error {response.status_code} after {elapsed:.1f}s (attempt {attempt + 1})")
                     if attempt < self.max_retries:
                         time.sleep(self.retry_delay)
                         continue
                     return None
                 
                 else:
-                    self.logger.error(f"API error {response.status_code}: {response.text}")
+                    self.logger.error(f"ElevenLabs API error {response.status_code} after {elapsed:.1f}s: {response.text}")
                     return None
                     
             except requests.exceptions.Timeout:
-                self.logger.warning(f"Request timeout ({self.api_timeout}s) on attempt {attempt + 1}")
+                self.logger.warning(f"ElevenLabs API timeout ({self.api_timeout}s) on attempt {attempt + 1}")
                 if attempt < self.max_retries:
                     time.sleep(self.retry_delay)
                     continue
                 return None
                 
             except requests.exceptions.ConnectionError:
-                self.logger.warning(f"Connection error on attempt {attempt + 1}")
+                self.logger.warning(f"ElevenLabs API connection error on attempt {attempt + 1}")
                 if attempt < self.max_retries:
                     time.sleep(self.retry_delay)
                     continue
@@ -242,7 +287,11 @@ class ElevenLabsTranscriber:
         def process_audio_chunk(audio_chunk):
             nonlocal full_text
             
-            if len(audio_chunk) < 0.5 * audio_capture.sample_rate:  # Less than 0.5s
+            # Allow shorter chunks for commands, but skip very tiny ones  
+            min_duration = 0.8 * audio_capture.sample_rate
+            if len(audio_chunk) < min_duration:
+                duration_s = len(audio_chunk) / audio_capture.sample_rate
+                self.logger.info(f"Skipping short audio chunk ({duration_s:.1f}s < 0.8s minimum)")
                 return
             
             # Transcribe chunk
