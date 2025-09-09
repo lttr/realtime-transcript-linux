@@ -101,12 +101,18 @@ class VoiceTranscriber:
         """Handle partial transcription results with progressive injection"""
         
         if phrase_text.strip():
+            self.logger.info(f"Transcribed phrase: '{phrase_text}'")
             print(f"Phrase: '{phrase_text}'")
             
             # Inject text immediately
+            injection_start = time.time()
             if self.text_injector.inject_text(phrase_text + " "):
+                injection_time = time.time() - injection_start
+                self.logger.info(f"Phrase successfully injected ({injection_time*1000:.0f}ms total)")
                 print(f"✓ Injected: '{phrase_text}'")
             else:
+                injection_time = time.time() - injection_start
+                self.logger.error(f"Phrase injection failed ({injection_time*1000:.0f}ms total)")
                 print(f"✗ Failed to inject: '{phrase_text}'")
     
     def _acquire_lock(self):
@@ -193,9 +199,11 @@ class VoiceTranscriber:
             
             # Handle final result
             if final_text.strip():
+                self.logger.info(f"Complete transcription session finished ({elapsed:.1f}s): '{final_text}'")
                 print(f"✅ Transcription complete ({elapsed:.1f}s): '{final_text}'")
                 return True
             else:
+                self.logger.info(f"Transcription session ended with no speech detected ({elapsed:.1f}s)")
                 print("No speech detected")
                 self.notification.show_notification("No speech detected", urgency="low")
                 return False
