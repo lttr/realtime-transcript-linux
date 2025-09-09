@@ -61,10 +61,10 @@ class AudioCapture:
             for frame_count in range(max_frames):
                 # Check external stop flag (in-process)
                 if stop_flag and stop_flag.get('stop', False):
-                    self.logger.info("🛑 Recording stopped by external signal")
+                    self.logger.info("Recording stopped by external signal")
                     # Process any remaining audio immediately when stopped externally
                     if phrase_frames and recording_started and callback:
-                        self.logger.info("📤 Processing remaining audio from external stop")
+                        self.logger.info("Processing remaining audio from external stop")
                         audio_chunk = self._frames_to_numpy(phrase_frames)
                         callback(audio_chunk)
                         phrase_frames = []  # Clear to avoid double processing
@@ -72,10 +72,10 @@ class AudioCapture:
                 
                 # Check external stop file (inter-process)
                 if os.path.exists("/tmp/voice_transcription_stop.flag"):
-                    self.logger.info("🛑 Recording stopped by external command")
+                    self.logger.info("Recording stopped by external command")
                     # Process any remaining audio immediately when stopped externally
                     if phrase_frames and recording_started and callback:
-                        self.logger.info("📤 Processing remaining audio from external stop")
+                        self.logger.info("Processing remaining audio from external stop")
                         audio_chunk = self._frames_to_numpy(phrase_frames)
                         callback(audio_chunk)
                         phrase_frames = []  # Clear to avoid double processing
@@ -95,7 +95,7 @@ class AudioCapture:
                 
                 if volume > self.silence_threshold:
                     if not recording_started:
-                        self.logger.info(f"🎙️ Speech detected!")
+                        self.logger.info(f"Speech detected (volume: {volume:.1f})")
                         # Mark start of first phrase
                         phrase_start_idx = len(all_frames) - len(phrase_frames)
                     recording_started = True
@@ -106,6 +106,9 @@ class AudioCapture:
                     # Short pause = phrase boundary
                     if (silence_frames == self.short_pause_frames and 
                         len(phrase_frames) >= self.min_phrase_frames):
+                        
+                        phrase_duration = len(phrase_frames) / (self.sample_rate / self.chunk_size)
+                        self.logger.info(f"Phrase boundary detected - sending {phrase_duration:.1f}s audio to transcriber")
                         
                         if callback:
                             # Send only the clean phrase audio (without overlap)
@@ -134,11 +137,17 @@ class AudioCapture:
         
         # Process any remaining phrase
         if phrase_frames and recording_started:
-            final_min_frames = int(self.sample_rate / self.chunk_size * 0.3)  # 0.3s minimum
+            # Only skip final phrases that are likely just silence/trailing audio
+            final_min_frames = int(self.sample_rate / self.chunk_size * 1.0)  # 1.0s minimum
             if len(phrase_frames) >= final_min_frames and callback:
+                phrase_duration = len(phrase_frames) / (self.sample_rate / self.chunk_size)
+                self.logger.info(f"Final phrase detected - sending {phrase_duration:.1f}s audio to transcriber")
                 # Send only the clean remaining phrase audio
                 audio_chunk = self._frames_to_numpy(phrase_frames)
                 callback(audio_chunk)
+            elif phrase_frames:
+                phrase_duration = len(phrase_frames) / (self.sample_rate / self.chunk_size)
+                self.logger.info(f"Final phrase too short ({phrase_duration:.1f}s < 1.0s) - skipping to avoid empty API response")
         
         return all_frames
     
@@ -277,6 +286,8 @@ class TextInjector:
         import subprocess
         import re
         
+        start_time = time.time()
+        
         try:
             if not text.strip():
                 return False
@@ -284,7 +295,10 @@ class TextInjector:
             # Clean filler words from text
             cleaned_text = self._clean_filler_words(text)
             if not cleaned_text.strip():
+                self.logger.debug(f"Text injection skipped - only filler words: '{text}'")
                 return False
+            
+            self.logger.info(f"Starting text injection: '{cleaned_text[:30]}{'...' if len(cleaned_text) > 30 else ''}'")
             
             # Check if xdotool is available
             result = subprocess.run(['which', 'xdotool'], 
@@ -310,11 +324,15 @@ class TextInjector:
                 # Type the cleaned text normally
                 subprocess.run(['xdotool', 'type', '--delay', '0', cleaned_text], check=True)
             
+            elapsed = time.time() - start_time
+            self.logger.info(f"Text injection completed ({elapsed*1000:.0f}ms): '{cleaned_text[:30]}{'...' if len(cleaned_text) > 30 else ''}'")
             return True
             
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"Text injection error: {e}")
+            elapsed = time.time() - start_time
+            self.logger.error(f"Text injection failed ({elapsed*1000:.0f}ms): {e}")
             return False
         except Exception as e:
-            self.logger.error(f"Unexpected injection error: {e}")
+            elapsed = time.time() - start_time
+            self.logger.error(f"Unexpected injection error ({elapsed*1000:.0f}ms): {e}")
             return False
