@@ -104,17 +104,27 @@ class AudioCapture:
                     silence_frames += 1
                     
                     # Short pause = phrase boundary
-                    if (silence_frames == self.short_pause_frames and 
+                    if (silence_frames == self.short_pause_frames and
                         len(phrase_frames) >= self.min_phrase_frames):
-                        
+
                         phrase_duration = len(phrase_frames) / (self.sample_rate / self.chunk_size)
                         self.logger.info(f"Phrase boundary detected - sending {phrase_duration:.1f}s audio to transcriber")
-                        
+
+                        # Show immediate visual feedback that processing started
+                        try:
+                            NotificationHelper.show_notification(
+                                "🔄 Processing speech...",
+                                urgency="low",
+                                expire_time="1000"
+                            )
+                        except:
+                            pass  # Don't fail on notification issues
+
                         if callback:
                             # Send only the clean phrase audio (without overlap)
                             audio_chunk = self._frames_to_numpy(phrase_frames)
                             callback(audio_chunk)
-                        
+
                         # Reset for next phrase - start fresh from current position
                         phrase_frames = []
                         phrase_start_idx = len(all_frames)  # Next phrase starts here
