@@ -141,11 +141,9 @@ class ElevenLabsTranscriber:
             self.logger.info(f"Audio too short for transcription ({audio_size_kb:.1f}KB < ~16KB minimum)")
             return ""
         
-        # For medium-sized segments, check if they're mostly silence
-        if len(wav_data) < 64000:  # Less than ~2 seconds
-            if self._is_mostly_silent(audio_data if isinstance(audio_data, np.ndarray) else wav_data):
-                self.logger.info(f"Audio mostly silent ({audio_size_kb:.1f}KB) - skipping to avoid empty response")
-                return ""
+        # Check all audio chunks for silence to prevent empty API responses
+        if self._is_mostly_silent(audio_data if isinstance(audio_data, np.ndarray) else wav_data):
+            return ""
         
         return self._transcribe_with_retry(wav_data, language)
     
@@ -158,25 +156,46 @@ class ElevenLabsTranscriber:
                 audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
             else:
                 audio_np = audio_data
-            
+
             if len(audio_np) == 0:
                 return True
-            
-            # Calculate RMS volume and peak volume
+
+            # Calculate RMS volume, peak volume, and speech activity indicators
             rms = np.sqrt(np.mean(audio_np**2))
             peak = np.max(np.abs(audio_np))
-            
-            # Threshold for silence detection (quite conservative)
-            silence_threshold_rms = 0.01  # 1% of full scale
-            silence_threshold_peak = 0.05  # 5% of full scale
-            
-            is_silent = rms < silence_threshold_rms and peak < silence_threshold_peak
-            
+
+            # Calculate speech activity by checking sustained energy above noise floor
+            # Split audio into 100ms chunks and count how many have significant energy
+            chunk_size = int(len(audio_np) * 0.1)  # 10% of audio length, roughly 100-200ms
+            if chunk_size < 100:
+                chunk_size = len(audio_np)  # Use full length for very short audio
+
+            chunks = [audio_np[i:i+chunk_size] for i in range(0, len(audio_np), chunk_size)]
+            active_chunks = 0
+
+            for chunk in chunks:
+                if len(chunk) > 0:
+                    chunk_rms = np.sqrt(np.mean(chunk**2))
+                    if chunk_rms > 0.008:  # Higher threshold for chunk activity
+                        active_chunks += 1
+
+            speech_activity_ratio = active_chunks / len(chunks) if chunks else 0
+
+            # More aggressive thresholds to catch empty responses
+            silence_threshold_rms = 0.007  # Reduced from 0.01
+            silence_threshold_peak = 0.03  # Reduced from 0.05
+            min_speech_activity = 0.15  # At least 15% of chunks must have speech energy
+
+            is_silent = (rms < silence_threshold_rms and
+                        peak < silence_threshold_peak) or speech_activity_ratio < min_speech_activity
+
             if is_silent:
-                self.logger.debug(f"Audio silence check: RMS={rms:.4f}, Peak={peak:.4f} - considered silent")
-            
+                self.logger.info(f"Audio silence check: RMS={rms:.4f}, Peak={peak:.4f}, Activity={speech_activity_ratio:.2f} - skipping likely empty response")
+            else:
+                self.logger.debug(f"Audio has speech: RMS={rms:.4f}, Peak={peak:.4f}, Activity={speech_activity_ratio:.2f}")
+
             return is_silent
-            
+
         except Exception as e:
             self.logger.debug(f"Silence detection error: {e}, assuming not silent")
             return False
@@ -286,20 +305,33 @@ class ElevenLabsTranscriber:
         
         def process_audio_chunk(audio_chunk):
             nonlocal full_text
-            
-            # Allow shorter chunks for commands, but skip very tiny ones  
+
+            # Allow shorter chunks for commands, but skip very tiny ones
             min_duration = 0.8 * audio_capture.sample_rate
             if len(audio_chunk) < min_duration:
                 duration_s = len(audio_chunk) / audio_capture.sample_rate
                 self.logger.info(f"Skipping short audio chunk ({duration_s:.1f}s < 0.8s minimum)")
                 return
-            
+
+            # Additional energy check before API call
+            duration_s = len(audio_chunk) / audio_capture.sample_rate
+            rms = np.sqrt(np.mean(audio_chunk**2))
+            peak = np.max(np.abs(audio_chunk))
+
+            # Log audio energy characteristics for debugging
+            self.logger.debug(f"Processing {duration_s:.1f}s chunk: RMS={rms:.4f}, Peak={peak:.4f}")
+
+            # Skip very low energy chunks that likely contain no speech
+            if rms < 0.005 and peak < 0.02:
+                self.logger.info(f"Skipping low-energy audio chunk: RMS={rms:.4f}, Peak={peak:.4f}")
+                return
+
             # Transcribe chunk
             phrase_text = self.transcribe_audio(audio_chunk, language)
-            
+
             if phrase_text and phrase_text.strip():
                 full_text += phrase_text + " "
-                
+
                 if text_callback:
                     text_callback(phrase_text.strip(), full_text.strip())
         
