@@ -295,31 +295,38 @@ class TextInjector:
         """Inject text into the currently active window using xdotool"""
         import subprocess
         import re
-        
+
         start_time = time.time()
-        
+
         try:
             if not text.strip():
                 return False
-            
+
+            # Preserve trailing space before cleaning
+            has_trailing_space = text.endswith(' ')
+
             # Clean filler words from text
             cleaned_text = self._clean_filler_words(text)
             if not cleaned_text.strip():
                 self.logger.debug(f"Text injection skipped - only filler words: '{text}'")
                 return False
-            
+
+            # Restore trailing space if it was present
+            if has_trailing_space and not cleaned_text.endswith(' '):
+                cleaned_text += ' '
+
             self.logger.info(f"Starting text injection: '{cleaned_text[:30]}{'...' if len(cleaned_text) > 30 else ''}'")
-            
+
             # Check if xdotool is available
-            result = subprocess.run(['which', 'xdotool'], 
+            result = subprocess.run(['which', 'xdotool'],
                                   capture_output=True, text=True)
             if result.returncode != 0:
                 self.logger.error("xdotool not installed")
                 return False
-            
+
             # Small delay for focus stability
             time.sleep(0.1)
-            
+
             # Check for "just enter" command
             just_enter_match = re.search(r'(.*)just\s+enter[.\s]*$', cleaned_text.strip(), re.IGNORECASE)
             if just_enter_match:

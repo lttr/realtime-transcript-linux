@@ -6,16 +6,25 @@ import logging
 import time
 from audio_utils import AudioCapture, NotificationHelper, TextInjector
 from elevenlabs_transcriber import ElevenLabsTranscriber
+from assemblyai_transcriber import AssemblyAITranscriber
 
 
 class VoiceTranscriber:
-    """ElevenLabs voice transcription system with instance locking"""
-    
-    def __init__(self):
-        self.audio_capture = AudioCapture()
+    """Voice transcription system with AssemblyAI and ElevenLabs engines"""
+
+    def __init__(self, engine='assemblyai'):
+        self.assemblyai = AssemblyAITranscriber(skip_availability_check=True)
         self.elevenlabs = ElevenLabsTranscriber(skip_availability_check=True)
         self.text_injector = TextInjector()
         self.notification = NotificationHelper()
+
+        # AudioCapture only needed for ElevenLabs, but we initialize it lazily
+        self.audio_capture = None
+
+        # Default engine configuration
+        self.engine = engine.lower()
+        if self.engine not in ['assemblyai', 'elevenlabs']:
+            self.engine = 'assemblyai'
         
         # Transcription state
         self.stop_flag = {'stop': False}
@@ -24,7 +33,7 @@ class VoiceTranscriber:
         
         # Setup logging first
         logging.basicConfig(
-            level=logging.INFO,
+            level=logging.DEBUG if os.getenv('DEBUG') else logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.FileHandler('/tmp/voice_transcription.log'),
@@ -86,33 +95,43 @@ class VoiceTranscriber:
             return False
     
     def _check_api_availability(self):
-        """Check if ElevenLabs API is available"""
-        if not self.elevenlabs.api_key:
-            self.logger.error("❌ ElevenLabs API key not configured")
-            return False
-        
-        if not self.elevenlabs.is_available():
-            self.logger.error("❌ ElevenLabs API not available")
-            return False
-        
+        """Check if selected transcription API is available"""
+        if self.engine == 'assemblyai':
+            if not self.assemblyai.api_key:
+                self.logger.error("❌ AssemblyAI API key not configured")
+                return False
+
+            if not self.assemblyai.is_available():
+                self.logger.error("❌ AssemblyAI API not available")
+                return False
+        else:  # elevenlabs
+            if not self.elevenlabs.api_key:
+                self.logger.error("❌ ElevenLabs API key not configured")
+                return False
+
+            if not self.elevenlabs.is_available():
+                self.logger.error("❌ ElevenLabs API not available")
+                return False
+
         return True
     
     def _handle_transcription_result(self, phrase_text, full_text):
         """Handle partial transcription results with progressive injection"""
-        
+
+        # The transcriber now sends only NEW text in phrase_text
         if phrase_text.strip():
-            self.logger.info(f"Transcribed phrase: '{phrase_text}'")
+            self.logger.info(f"Injecting phrase: '{phrase_text}'")
             print(f"Phrase: '{phrase_text}'")
-            
-            # Inject text immediately
+
+            # Inject the new text
             injection_start = time.time()
             if self.text_injector.inject_text(phrase_text + " "):
                 injection_time = time.time() - injection_start
-                self.logger.info(f"Phrase successfully injected ({injection_time*1000:.0f}ms total)")
+                self.logger.info(f"Text successfully injected ({injection_time*1000:.0f}ms total)")
                 print(f"✓ Injected: '{phrase_text}'")
             else:
                 injection_time = time.time() - injection_start
-                self.logger.error(f"Phrase injection failed ({injection_time*1000:.0f}ms total)")
+                self.logger.error(f"Text injection failed ({injection_time*1000:.0f}ms total)")
                 print(f"✗ Failed to inject: '{phrase_text}'")
     
     def _acquire_lock(self):
@@ -157,46 +176,61 @@ class VoiceTranscriber:
             self.logger.error(f"Lock release error: {e}")
     
     def transcribe(self):
-        """Main transcription method using ElevenLabs API"""
-        
+        """Main transcription method using selected API"""
+
         # Acquire instance lock first
         if not self._acquire_lock():
             return False
-        
+
         try:
-            print("Starting voice transcription...")
-            
+            engine_name = self.engine.upper()
+            print(f"Starting voice transcription with {engine_name}...")
+
             # Check API availability
             if not self._check_api_availability():
                 self.notification.show_notification(
-                    "❌ ElevenLabs API not available", 
+                    f"❌ {engine_name} API not available",
                     urgency="critical"
                 )
                 return False
-            
+
             # Show initial notification
-            self.notification.show_notification("🎤 Recording with ElevenLabs", urgency="normal")
-            
+            self.notification.show_notification(f"🎤 Recording with {engine_name}", urgency="normal")
+
             # Reset stop flag and remove any existing stop file
             self.stop_flag['stop'] = False
             if os.path.exists(self.stop_file):
                 os.remove(self.stop_file)
-            
-            # Start transcription with ElevenLabs
+
+            # Start transcription with selected engine
             start_time = time.time()
-            
+
             # Get language code
             language_code = self.supported_languages[self.current_language]['code']
-            
-            final_text = self.elevenlabs.transcribe_streaming(
-                self.audio_capture,
-                text_callback=self._handle_transcription_result,
-                stop_flag=self.stop_flag,
-                language=language_code
-            )
-            
+
+            # Choose transcriber based on engine
+            if self.engine == 'assemblyai':
+                # AssemblyAI doesn't use AudioCapture - it has its own MicrophoneStream
+                final_text = self.assemblyai.transcribe_streaming(
+                    None,  # audio_capture not used
+                    text_callback=self._handle_transcription_result,
+                    stop_flag=self.stop_flag,
+                    language=language_code
+                )
+            else:  # elevenlabs
+                # Initialize AudioCapture for ElevenLabs if not already done
+                if self.audio_capture is None:
+                    self.audio_capture = AudioCapture()
+
+                final_text = self.elevenlabs.transcribe_streaming(
+                    self.audio_capture,
+                    text_callback=self._handle_transcription_result,
+                    stop_flag=self.stop_flag,
+                    language=language_code
+                )
+
             elapsed = time.time() - start_time
-            
+
             # Handle final result
             if final_text.strip():
                 self.logger.info(f"Complete transcription session finished ({elapsed:.1f}s): '{final_text}'")
@@ -239,11 +273,17 @@ class VoiceTranscriber:
             self.stop_flag['stop'] = True
     
     def get_engine_status(self):
-        """Get status of ElevenLabs transcription engine"""
+        """Get status of both transcription engines"""
         status = {
+            'assemblyai': {
+                'available': self.assemblyai.is_available(),
+                'api_key_configured': bool(self.assemblyai.api_key),
+                'default': self.engine == 'assemblyai'
+            },
             'elevenlabs': {
                 'available': self.elevenlabs.is_available(),
-                'api_key_configured': bool(self.elevenlabs.api_key)
+                'api_key_configured': bool(self.elevenlabs.api_key),
+                'default': self.engine == 'elevenlabs'
             }
         }
         return status
@@ -252,36 +292,66 @@ class VoiceTranscriber:
         """Print current system status"""
         print("Engine Status:")
         status = self.get_engine_status()
-        
+
         for engine, info in status.items():
-            print(f"  {engine}: {info}")
-        
-        if status['elevenlabs']['available']:
-            print("Status: Ready")
+            default_marker = " (DEFAULT)" if info['default'] else ""
+            available_marker = "✅" if info['available'] else "❌"
+            print(f"  {engine}{default_marker}: {available_marker} (API key: {info['api_key_configured']})")
+
+        # Check if default engine is ready
+        default_engine = self.engine
+        if status[default_engine]['available']:
+            print(f"\nStatus: Ready (using {default_engine})")
         else:
-            print("Status: Not ready - check API configuration")
+            print(f"\nStatus: Not ready - check {default_engine} API configuration")
     
     def ping_test(self):
-        """Test connectivity to transcription service"""
-        print("Testing ElevenLabs API connectivity...")
-        
-        if self.elevenlabs.is_available():
-            print("✅ ElevenLabs API: Connected")
-            return True
+        """Test connectivity to both transcription services"""
+        print("Testing API connectivity...\n")
+
+        assemblyai_ok = False
+        elevenlabs_ok = False
+
+        print("AssemblyAI:")
+        if self.assemblyai.is_available():
+            print("  ✅ Connected")
+            assemblyai_ok = True
         else:
-            print("❌ ElevenLabs API: Connection failed")
-            return False
+            print("  ❌ Connection failed")
+
+        print("\nElevenLabs:")
+        if self.elevenlabs.is_available():
+            print("  ✅ Connected")
+            elevenlabs_ok = True
+        else:
+            print("  ❌ Connection failed")
+
+        print(f"\nDefault engine: {self.engine}")
+
+        return assemblyai_ok or elevenlabs_ok
 
 
 def main():
-    if len(sys.argv) < 2:
+    # Parse engine selection from command line
+    engine = 'assemblyai'  # Default engine
+    args = sys.argv[1:]
+
+    # Check for --engine flag
+    if '--engine' in args:
+        engine_idx = args.index('--engine')
+        if engine_idx + 1 < len(args):
+            engine = args[engine_idx + 1]
+            # Remove engine args from the list
+            args = args[:engine_idx] + args[engine_idx + 2:]
+
+    if len(args) < 1:
         # Default: start transcription
-        transcriber = VoiceTranscriber()
+        transcriber = VoiceTranscriber(engine=engine)
         transcriber.transcribe()
         return
-    
-    command = sys.argv[1].lower()
-    transcriber = VoiceTranscriber()
+
+    command = args[0].lower()
+    transcriber = VoiceTranscriber(engine=engine)
     
     if command == "status":
         transcriber.print_status()
@@ -305,12 +375,14 @@ def main():
                 print(f"  {code}: {info['name']}")
     else:
         print("Usage:")
-        print("  ./voice_transcription.py         # Start transcription")
-        print("  ./voice_transcription.py status  # Show system status")
-        print("  ./voice_transcription.py ping    # Test API connectivity")
-        print("  ./voice_transcription.py stop    # Stop active recording")
-        print("  ./voice_transcription.py lang    # Show current language")
-        print("  ./voice_transcription.py lang <code>  # Set language (auto/en/cs)")
+        print("  ./voice_transcription.py                      # Start transcription (AssemblyAI)")
+        print("  ./voice_transcription.py --engine assemblyai  # Use AssemblyAI (default)")
+        print("  ./voice_transcription.py --engine elevenlabs  # Use ElevenLabs")
+        print("  ./voice_transcription.py status               # Show system status")
+        print("  ./voice_transcription.py ping                 # Test API connectivity")
+        print("  ./voice_transcription.py stop                 # Stop active recording")
+        print("  ./voice_transcription.py lang                 # Show current language")
+        print("  ./voice_transcription.py lang <code>          # Set language (auto/en/cs)")
 
 
 if __name__ == "__main__":
