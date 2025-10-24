@@ -4,16 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A real-time voice transcription system for Linux GNOME that captures speech via global keyboard shortcut and injects transcribed text directly into the active window. Uses ElevenLabs API for high-quality transcription with instance locking for reliability.
+A real-time voice transcription system for Linux GNOME that captures speech via global keyboard shortcut and injects transcribed text directly into the active window. Supports both AssemblyAI (default) and ElevenLabs streaming APIs for high-quality transcription with instance locking for reliability.
 
 ## Architecture
 
-**ElevenLabs Voice Transcription System**: Cloud-based speech-to-text using ElevenLabs API for optimal accuracy and speed.
+**Dual-Engine Voice Transcription System**: Cloud-based speech-to-text using AssemblyAI (default) or ElevenLabs streaming APIs for optimal accuracy and real-time performance.
 
 ### Core Components
 
-- **`voice_transcription.py`**: Main orchestrator with ElevenLabs API and progressive text injection
-- **`elevenlabs_transcriber.py`**: ElevenLabs API client with .env file support and retry logic  
+- **`voice_transcription.py`**: Main orchestrator supporting both AssemblyAI and ElevenLabs with progressive text injection
+- **`assemblyai_transcriber.py`**: AssemblyAI streaming API client (default engine)
+- **`elevenlabs_transcriber.py`**: ElevenLabs API client with .env file support and retry logic (alternative engine)
 - **`audio_utils.py`**: Shared audio processing utilities (VAD, text injection, notifications)
 - **`.env`**: API key configuration file (create from `.env.example`)
 
@@ -28,8 +29,9 @@ A real-time voice transcription system for Linux GNOME that captures speech via 
 ### Key Technical Details
 
 #### Performance Characteristics
-- **ElevenLabs API**: ~0.7-2.1s response time, ~100MB memory, requires internet
-- **Progressive injection**: Real-time text appearing as you speak
+- **AssemblyAI Streaming (default)**: Real-time streaming transcription, progressive text injection as you speak
+- **ElevenLabs API (alternative)**: ~0.7-2.1s response time, ~100MB memory, chunk-based processing
+- **Progressive injection**: Real-time text appearing as you speak (both engines)
 
 #### Technical Features
 - **Instance locking**: Prevents multiple overlapping sessions that cause delays
@@ -49,13 +51,17 @@ A real-time voice transcription system for Linux GNOME that captures speech via 
 
 ### Voice Transcription Commands
 ```bash
-# Run voice transcription
+# Run voice transcription with default engine (AssemblyAI)
 ./voice_transcription.py
 
-# Check system status and engine availability  
+# Run with specific engine
+./voice_transcription.py --engine assemblyai  # Use AssemblyAI (default)
+./voice_transcription.py --engine elevenlabs  # Use ElevenLabs
+
+# Check system status and engine availability
 ./voice_transcription.py status
 
-# Test connectivity
+# Test connectivity (both engines)
 ./voice_transcription.py ping
 
 # Stop active recording
@@ -104,17 +110,27 @@ Configure in **Settings** → **Keyboard** → **Keyboard Shortcuts** → **Cust
 
 ## Configuration
 
-### ElevenLabs API Configuration
+### API Configuration
 Configure using `.env` file in project root:
 ```bash
 # Copy template and edit
 cp .env.example .env
-# Add your API key: ELEVENLABS_API_KEY=your_key_here
+# Add your API keys (at least one required):
+# ASSEMBLYAI_API_KEY=your_key_here  (default engine)
+# ELEVENLABS_API_KEY=your_key_here  (alternative engine)
 ```
 
+#### AssemblyAI Configuration (Default Engine)
+Located in `assemblyai_transcriber.py`:
+- Streaming API with real-time transcription
+- Sample rate: 16kHz
+- Auto-formatting: Enabled (`format_turns=True`)
+- Language detection: Auto-detect or specified (en/cs)
+
+#### ElevenLabs Configuration (Alternative Engine)
 Located in `elevenlabs_transcriber.py`:
 - API timeout: 8.0 seconds (transcription requests)
-- Quick test timeout: 5.0 seconds (connectivity tests)  
+- Quick test timeout: 5.0 seconds (connectivity tests)
 - Max retries: 2 attempts with 1.0s delay
 - Model: `scribe_v1` (ElevenLabs speech-to-text model)
 
@@ -136,10 +152,15 @@ Located in `audio_utils.py` AudioCapture class:
 
 ### Common Issues
 
-#### ElevenLabs API Issues
-**API key not configured**: Ensure `.env` file exists with correct format: `ELEVENLABS_API_KEY=your_key_here` (no quotes or extra spaces).
+#### API Issues
+**API key not configured**: Ensure `.env` file exists with correct format:
+- AssemblyAI: `ASSEMBLYAI_API_KEY=your_key_here`
+- ElevenLabs: `ELEVENLABS_API_KEY=your_key_here`
+(no quotes or extra spaces)
 
-**API connectivity issues**: Check internet connection and API key validity. Use `./voice_transcription.py ping` to test connectivity.
+**API connectivity issues**: Check internet connection and API key validity. Use `./voice_transcription.py ping` to test connectivity for both engines.
+
+**Engine selection**: Use `--engine assemblyai` or `--engine elevenlabs` to switch between engines. AssemblyAI is default.
 
 #### Performance Issues
 **Multiple instances**: System prevents overlapping sessions with instance locking. If you see "Voice transcription already in progress", wait for current session to complete.
