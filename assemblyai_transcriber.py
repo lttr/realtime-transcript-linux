@@ -5,6 +5,8 @@ import time
 import logging
 import numpy as np
 import threading
+import subprocess
+import shutil
 from typing import Optional, Callable, Type
 from pathlib import Path
 
@@ -16,7 +18,6 @@ except ImportError:
     DOTENV_AVAILABLE = False
 
 try:
-    import assemblyai as aai
     from assemblyai.streaming.v3 import (
         BeginEvent,
         StreamingClient,
@@ -45,19 +46,37 @@ class AssemblyAITranscriber:
 
         # Streaming settings
         self.sample_rate = 16000
+        self.chunk_size = 1024
+        self.bytes_per_sample = 2  # 16-bit audio
+        self.chunk_bytes = self.chunk_size * self.bytes_per_sample
 
         # State tracking for progressive transcription
         self.full_text = ""
         self.text_callback = None
         self.client = None
-        self.mic_stream = None  # Store mic stream for cleanup
+        self.recorder_process = None  # parecord subprocess
         self.is_streaming = False
         self.stop_streaming = None  # Threading event for stopping
+
+        # Find audio recorder command
+        self._recorder_cmd = self._find_recorder()
 
         if not ASSEMBLYAI_AVAILABLE:
             self.logger.warning("AssemblyAI package not installed. Run: pip install assemblyai")
         elif not self.api_key:
             self.logger.warning("No AssemblyAI API key found. Create .env file or set ASSEMBLYAI_API_KEY environment variable.")
+
+    def _find_recorder(self):
+        """Find available audio recorder command (parecord or arecord)"""
+        # Prefer parecord (PulseAudio/PipeWire) - works on modern GNOME
+        if shutil.which('parecord'):
+            return ['parecord', '--raw', '--rate', str(self.sample_rate),
+                    '--channels', '1', '--format=s16le']
+        # Fallback to arecord (ALSA)
+        if shutil.which('arecord'):
+            return ['arecord', '-q', '-f', 'S16_LE', '-r', str(self.sample_rate),
+                    '-c', '1', '-t', 'raw']
+        return None
 
     def _load_api_key(self) -> Optional[str]:
         """Load API key from .env file, then environment variable"""
@@ -220,6 +239,11 @@ class AssemblyAITranscriber:
             # Create microphone stream
             self.logger.info("Starting microphone stream...")
 
+            # Check for audio recorder
+            if not self._recorder_cmd:
+                self.logger.error("No audio recorder found. Install pulseaudio-utils or alsa-utils.")
+                return ""
+
             # Start a timeout monitor thread to stop after silence
             self.stop_streaming = threading.Event()
 
@@ -252,32 +276,40 @@ class AssemblyAITranscriber:
 
                 # Disconnect when stopped
                 try:
-                    # Close mic stream to unblock client.stream()
-                    if transcriber.mic_stream:
-                        transcriber.mic_stream.close()
+                    # Terminate recorder process
+                    if self.recorder_process:
+                        self.recorder_process.terminate()
                     client.disconnect(terminate=True)
                 except Exception as e:
-                    transcriber.logger.debug(f"Cleanup error in monitor: {e}")
+                    self.logger.debug(f"Cleanup error in monitor: {e}")
 
             monitor_thread = threading.Thread(target=timeout_monitor, daemon=True)
             monitor_thread.start()
 
-            # Start streaming with generator wrapper for proper cleanup
+            # Start streaming with parecord subprocess
             try:
-                self.mic_stream = aai.extras.MicrophoneStream(sample_rate=self.sample_rate)
+                self.recorder_process = subprocess.Popen(
+                    self._recorder_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL
+                )
 
-                # Wrap mic stream to allow interruption
+                # Generator that reads from parecord and yields audio chunks
                 def audio_generator():
-                    """Generator that yields audio but can be stopped"""
+                    """Generator that yields audio chunks from parecord"""
                     try:
-                        for chunk in self.mic_stream:
-                            if self.stop_streaming.is_set():
-                                self.logger.info("Stop signal received in audio generator")
+                        while not self.stop_streaming.is_set():
+                            data = self.recorder_process.stdout.read(self.chunk_bytes)
+                            if not data or len(data) < self.chunk_bytes:
                                 break
-                            yield chunk
+                            yield data
                     finally:
-                        if self.mic_stream:
-                            self.mic_stream.close()
+                        if self.recorder_process:
+                            self.recorder_process.terminate()
+                            try:
+                                self.recorder_process.wait(timeout=1)
+                            except subprocess.TimeoutExpired:
+                                self.recorder_process.kill()
 
                 client.stream(audio_generator())
 
@@ -289,11 +321,14 @@ class AssemblyAITranscriber:
                 # Signal monitor to stop
                 self.stop_streaming.set()
 
-                # Close microphone stream
-                if self.mic_stream:
+                # Terminate recorder process
+                if self.recorder_process:
                     try:
-                        self.mic_stream.close()
-                        self.logger.info("Microphone stream closed")
+                        self.recorder_process.terminate()
+                        self.recorder_process.wait(timeout=1)
+                        self.logger.info("Audio recorder stopped")
+                    except subprocess.TimeoutExpired:
+                        self.recorder_process.kill()
                     except:
                         pass
 
@@ -307,7 +342,7 @@ class AssemblyAITranscriber:
                 except:
                     pass
 
-                self.mic_stream = None
+                self.recorder_process = None
 
             return self.full_text.strip()
 
