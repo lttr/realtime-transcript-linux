@@ -6,6 +6,5 @@ python-dotenv>=1.0.0
 # AssemblyAI API
 assemblyai>=0.30.0
 
-# Audio processing
-PyAudio>=0.2.11
+# Audio processing (uses system parecord/arecord - no PyAudio needed)
 numpy>=1.21.0

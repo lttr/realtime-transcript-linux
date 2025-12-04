@@ -1,108 +1,115 @@
 #!/home/lukas/code/realtime-transcript-linux/venv/bin/python
 
 import os
-import pyaudio
+import subprocess
 import numpy as np
 import logging
 import time
+import shutil
 
 class AudioCapture:
-    """Shared audio capture utilities for both ElevenLabs and Whisper engines"""
-    
+    """Shared audio capture utilities using parecord (PulseAudio) - no PyAudio dependency"""
+
     def __init__(self, sample_rate=16000, chunk_size=1024, channels=1):
         self.sample_rate = sample_rate
         self.chunk_size = chunk_size
         self.channels = channels
-        self.audio_format = pyaudio.paInt16
-        
+        self.bytes_per_sample = 2  # 16-bit audio
+        self.chunk_bytes = chunk_size * self.bytes_per_sample
+
         # VAD settings
         self.silence_threshold = 50
         self.short_pause_frames = int(sample_rate / chunk_size * 1.5)  # 1.5s phrase boundary
         self.long_pause_frames = int(sample_rate / chunk_size * 4.0)   # 4s end recording
         self.min_phrase_frames = int(sample_rate / chunk_size * 2.0)   # Min 2s for phrase
-        
+
         self.logger = logging.getLogger(__name__)
-    
+
+        # Check for parecord availability
+        self._recorder_cmd = self._find_recorder()
+
+    def _find_recorder(self):
+        """Find available audio recorder command (parecord or arecord)"""
+        # Prefer parecord (PulseAudio/PipeWire) - works on modern GNOME
+        if shutil.which('parecord'):
+            return ['parecord', '--raw', '--rate', str(self.sample_rate),
+                    '--channels', str(self.channels), '--format=s16le']
+        # Fallback to arecord (ALSA)
+        if shutil.which('arecord'):
+            return ['arecord', '-q', '-f', 'S16_LE', '-r', str(self.sample_rate),
+                    '-c', str(self.channels), '-t', 'raw']
+        raise RuntimeError("No audio recorder found. Install pulseaudio-utils or alsa-utils.")
+
     def capture_streaming_audio(self, max_duration=45, callback=None, stop_flag=None):
         """
         Capture audio with streaming processing on natural speech pauses
-        
+
         Args:
             max_duration: Maximum recording duration in seconds
             callback: Function called with audio chunks when phrase detected
             stop_flag: Shared flag to stop recording externally
-            
+
         Returns:
             List of all audio frames captured
         """
-        audio = None
-        stream = None
+        process = None
         all_frames = []
-        
+
         try:
-            audio = pyaudio.PyAudio()
-            
-            stream = audio.open(
-                format=self.audio_format,
-                channels=self.channels,
-                rate=self.sample_rate,
-                input=True,
-                frames_per_buffer=self.chunk_size
+            process = subprocess.Popen(
+                self._recorder_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL
             )
-            
+
             self.logger.info("🎤 Recording with natural pause detection...")
-            
+
             phrase_frames = []
             silence_frames = 0
             recording_started = False
             max_frames = int(self.sample_rate / self.chunk_size * max_duration)
-            phrase_start_idx = 0  # Track where current phrase started in all_frames
-            
+
             for frame_count in range(max_frames):
                 # Check external stop flag (in-process)
                 if stop_flag and stop_flag.get('stop', False):
                     self.logger.info("Recording stopped by external signal")
-                    # Process any remaining audio immediately when stopped externally
                     if phrase_frames and recording_started and callback:
                         self.logger.info("Processing remaining audio from external stop")
                         audio_chunk = self._frames_to_numpy(phrase_frames)
                         callback(audio_chunk)
-                        phrase_frames = []  # Clear to avoid double processing
+                        phrase_frames = []
                     break
-                
+
                 # Check external stop file (inter-process)
                 if os.path.exists("/tmp/voice_transcription_stop.flag"):
                     self.logger.info("Recording stopped by external command")
-                    # Process any remaining audio immediately when stopped externally
                     if phrase_frames and recording_started and callback:
                         self.logger.info("Processing remaining audio from external stop")
                         audio_chunk = self._frames_to_numpy(phrase_frames)
                         callback(audio_chunk)
-                        phrase_frames = []  # Clear to avoid double processing
+                        phrase_frames = []
                     break
-                
-                try:
-                    data = stream.read(self.chunk_size, exception_on_overflow=False)
-                except Exception as e:
-                    self.logger.warning(f"Audio read error: {e}")
-                    continue
-                
+
+                # Read chunk from subprocess stdout
+                data = process.stdout.read(self.chunk_bytes)
+                if not data or len(data) < self.chunk_bytes:
+                    self.logger.warning("Audio stream ended unexpectedly")
+                    break
+
                 all_frames.append(data)
                 phrase_frames.append(data)
-                
+
                 # Voice activity detection
                 volume = self._calculate_volume(data)
-                
+
                 if volume > self.silence_threshold:
                     if not recording_started:
                         self.logger.info(f"Speech detected (volume: {volume:.1f})")
-                        # Mark start of first phrase
-                        phrase_start_idx = len(all_frames) - len(phrase_frames)
                     recording_started = True
                     silence_frames = 0
                 elif recording_started:
                     silence_frames += 1
-                    
+
                     # Short pause = phrase boundary
                     if (silence_frames == self.short_pause_frames and
                         len(phrase_frames) >= self.min_phrase_frames):
@@ -110,7 +117,6 @@ class AudioCapture:
                         phrase_duration = len(phrase_frames) / (self.sample_rate / self.chunk_size)
                         self.logger.info(f"Phrase boundary detected - sending {phrase_duration:.1f}s audio to transcriber")
 
-                        # Show immediate visual feedback that processing started
                         try:
                             NotificationHelper.show_notification(
                                 "🔄 Processing speech...",
@@ -118,47 +124,43 @@ class AudioCapture:
                                 expire_time="1000"
                             )
                         except:
-                            pass  # Don't fail on notification issues
+                            pass
 
                         if callback:
-                            # Send only the clean phrase audio (without overlap)
                             audio_chunk = self._frames_to_numpy(phrase_frames)
                             callback(audio_chunk)
 
-                        # Reset for next phrase - start fresh from current position
                         phrase_frames = []
-                        phrase_start_idx = len(all_frames)  # Next phrase starts here
-                    
+
                     # Long pause = end recording
                     elif silence_frames > self.long_pause_frames:
                         self.logger.info("✅ Recording complete - long pause detected")
                         break
-        
+
         except Exception as e:
             self.logger.error(f"Audio capture error: {e}")
             return []
-        
+
         finally:
-            if stream:
-                stream.stop_stream()
-                stream.close()
-            if audio:
-                audio.terminate()
-        
+            if process:
+                process.terminate()
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+
         # Process any remaining phrase
         if phrase_frames and recording_started:
-            # Only skip final phrases that are likely just silence/trailing audio
-            final_min_frames = int(self.sample_rate / self.chunk_size * 1.0)  # 1.0s minimum
+            final_min_frames = int(self.sample_rate / self.chunk_size * 1.0)
             if len(phrase_frames) >= final_min_frames and callback:
                 phrase_duration = len(phrase_frames) / (self.sample_rate / self.chunk_size)
                 self.logger.info(f"Final phrase detected - sending {phrase_duration:.1f}s audio to transcriber")
-                # Send only the clean remaining phrase audio
                 audio_chunk = self._frames_to_numpy(phrase_frames)
                 callback(audio_chunk)
             elif phrase_frames:
                 phrase_duration = len(phrase_frames) / (self.sample_rate / self.chunk_size)
-                self.logger.info(f"Final phrase too short ({phrase_duration:.1f}s < 1.0s) - skipping to avoid empty API response")
-        
+                self.logger.info(f"Final phrase too short ({phrase_duration:.1f}s < 1.0s) - skipping")
+
         return all_frames
     
     def capture_complete_audio(self, max_duration=20):
