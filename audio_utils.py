@@ -267,10 +267,11 @@ class NotificationHelper:
 
 class TextInjector:
     """Helper for injecting text into active window"""
-    
-    def __init__(self):
+
+    def __init__(self, use_xdotool=False):
         self.logger = logging.getLogger(__name__)
-        
+        self.use_xdotool = use_xdotool  # False = clipboard (default), True = xdotool type
+
         # Only very short filler words - conservative list
         self.filler_words = {'uh', 'um', 'er', 'ah', 'eh', 'uhm', 'hmm', 'hm', 'mm'}
     
@@ -292,9 +293,52 @@ class TextInjector:
         result = re.sub(r'\s+([,.!?;:])', r'\1', result)  # Remove space before punctuation
         
         return result.strip()
-    
+
+    def _do_inject(self, text):
+        """Perform the actual text injection using clipboard or xdotool"""
+        import subprocess
+
+        if self.use_xdotool:
+            # Direct keystroke simulation
+            subprocess.run(['xdotool', 'type', '--delay', '0', text], check=True)
+        else:
+            # Clipboard-based injection: copy to clipboard, then paste
+            # Use xsel to set clipboard content
+            result = subprocess.run(['which', 'xsel'], capture_output=True, text=True)
+            if result.returncode != 0:
+                self.logger.error("xsel not installed (required for clipboard mode)")
+                raise subprocess.CalledProcessError(1, 'xsel')
+
+            # Copy text to clipboard
+            proc = subprocess.Popen(['xsel', '--clipboard', '--input'],
+                                   stdin=subprocess.PIPE, text=True)
+            proc.communicate(input=text)
+            if proc.returncode != 0:
+                raise subprocess.CalledProcessError(proc.returncode, 'xsel')
+
+            # Small delay to ensure clipboard is ready
+            time.sleep(0.05)
+
+            # Detect if active window is a terminal (needs Ctrl+Shift+V)
+            paste_key = 'ctrl+v'
+            try:
+                window_id = subprocess.run(['xdotool', 'getactivewindow'],
+                                          capture_output=True, text=True, check=True).stdout.strip()
+                wm_class = subprocess.run(['xprop', '-id', window_id, 'WM_CLASS'],
+                                         capture_output=True, text=True, check=True).stdout.lower()
+                # Common terminal emulators
+                terminals = ['gnome-terminal', 'kitty', 'alacritty', 'konsole', 'xterm',
+                            'tilix', 'terminator', 'urxvt', 'st', 'foot', 'wezterm']
+                if any(term in wm_class for term in terminals):
+                    paste_key = 'ctrl+shift+v'
+            except subprocess.CalledProcessError:
+                pass  # Fall back to ctrl+v if detection fails
+
+            # Paste using detected shortcut
+            subprocess.run(['xdotool', 'key', paste_key], check=True)
+
     def inject_text(self, text):
-        """Inject text into the currently active window using xdotool"""
+        """Inject text into the currently active window"""
         import subprocess
         import re
 
@@ -317,9 +361,10 @@ class TextInjector:
             if has_trailing_space and not cleaned_text.endswith(' '):
                 cleaned_text += ' '
 
-            self.logger.info(f"Starting text injection: '{cleaned_text[:30]}{'...' if len(cleaned_text) > 30 else ''}'")
+            method = "xdotool" if self.use_xdotool else "clipboard"
+            self.logger.info(f"Starting text injection ({method}): '{cleaned_text[:30]}{'...' if len(cleaned_text) > 30 else ''}'")
 
-            # Check if xdotool is available
+            # Check if xdotool is available (needed for both methods)
             result = subprocess.run(['which', 'xdotool'],
                                   capture_output=True, text=True)
             if result.returncode != 0:
@@ -332,21 +377,17 @@ class TextInjector:
             # Check for "just enter" command
             just_enter_match = re.search(r'(.*)just\s+enter[.\s]*$', cleaned_text.strip(), re.IGNORECASE)
             if just_enter_match:
-                # Type preceding text and press Enter
                 preceding_text = just_enter_match.group(1).strip()
-                if preceding_text:
-                    subprocess.run(['xdotool', 'type', '--delay', '0', preceding_text + " (enter)"], check=True)
-                else:
-                    subprocess.run(['xdotool', 'type', '--delay', '0', "(enter)"], check=True)
+                text_to_inject = (preceding_text + " (enter)") if preceding_text else "(enter)"
+                self._do_inject(text_to_inject)
                 subprocess.run(['xdotool', 'key', 'Return'], check=True)
             else:
-                # Type the cleaned text normally
-                subprocess.run(['xdotool', 'type', '--delay', '0', cleaned_text], check=True)
-            
+                self._do_inject(cleaned_text)
+
             elapsed = time.time() - start_time
             self.logger.info(f"Text injection completed ({elapsed*1000:.0f}ms): '{cleaned_text[:30]}{'...' if len(cleaned_text) > 30 else ''}'")
             return True
-            
+
         except subprocess.CalledProcessError as e:
             elapsed = time.time() - start_time
             self.logger.error(f"Text injection failed ({elapsed*1000:.0f}ms): {e}")

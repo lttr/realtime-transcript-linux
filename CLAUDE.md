@@ -24,7 +24,7 @@ A real-time voice transcription system for Linux GNOME that captures speech via 
 2. **API Check**: Verifies ElevenLabs API key and connectivity
 3. **Audio Capture**: Records with voice activity detection and natural pause boundaries (1.5s phrase boundaries, 4s recording end)  
 4. **Streaming Processing**: Transcribes audio chunks on natural speech pauses
-5. **Progressive Injection**: Types transcribed phrases immediately via xdotool during speech
+5. **Progressive Injection**: Pastes transcribed phrases via clipboard (default) or xdotool type
 
 ### Key Technical Details
 
@@ -38,7 +38,7 @@ A real-time voice transcription system for Linux GNOME that captures speech via 
 - **Automatic language detection**: Seamlessly handles mixed Czech/English conversations
 - **Natural pause detection**: Dual-threshold VAD distinguishes phrase boundaries from recording end
 - **Streaming transcription**: Processes 2+ second audio chunks on natural speech pauses
-- **Progressive injection**: Injects text as phrases complete, not just at recording end
+- **Progressive injection**: Injects text as phrases complete via clipboard+paste (or xdotool type with `--xdotool` flag)
 - **High-accuracy API**: Cloud-based processing with scribe_v1 model
 
 #### File Locations
@@ -51,8 +51,11 @@ A real-time voice transcription system for Linux GNOME that captures speech via 
 
 ### Voice Transcription Commands
 ```bash
-# Run voice transcription with default engine (AssemblyAI)
+# Run voice transcription (clipboard mode, AssemblyAI engine)
 ./voice_transcription.py
+
+# Use xdotool type instead of clipboard for text injection
+./voice_transcription.py --xdotool
 
 # Run with specific engine
 ./voice_transcription.py --engine assemblyai  # Use AssemblyAI (default)
@@ -92,7 +95,7 @@ tail -f /tmp/voice_transcription.log
 pip install -r requirements.txt
 
 # System dependencies (Ubuntu/Debian)
-sudo apt install python3 python3-pip python3-dev portaudio19-dev xdotool libnotify-bin
+sudo apt install python3 python3-pip python3-dev portaudio19-dev xdotool xsel libnotify-bin
 ```
 
 ### GNOME Keyboard Shortcuts

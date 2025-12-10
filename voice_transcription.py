@@ -12,10 +12,10 @@ from assemblyai_transcriber import AssemblyAITranscriber
 class VoiceTranscriber:
     """Voice transcription system with AssemblyAI and ElevenLabs engines"""
 
-    def __init__(self, engine='assemblyai'):
+    def __init__(self, engine='assemblyai', use_xdotool=False):
         self.assemblyai = AssemblyAITranscriber(skip_availability_check=True)
         self.elevenlabs = ElevenLabsTranscriber(skip_availability_check=True)
-        self.text_injector = TextInjector()
+        self.text_injector = TextInjector(use_xdotool=use_xdotool)
         self.notification = NotificationHelper()
 
         # AudioCapture only needed for ElevenLabs, but we initialize it lazily
@@ -332,8 +332,9 @@ class VoiceTranscriber:
 
 
 def main():
-    # Parse engine selection from command line
+    # Parse command line flags
     engine = 'assemblyai'  # Default engine
+    use_xdotool = False    # Default: clipboard injection
     args = sys.argv[1:]
 
     # Check for --engine flag
@@ -344,14 +345,19 @@ def main():
             # Remove engine args from the list
             args = args[:engine_idx] + args[engine_idx + 2:]
 
+    # Check for --xdotool flag
+    if '--xdotool' in args:
+        use_xdotool = True
+        args.remove('--xdotool')
+
     if len(args) < 1:
         # Default: start transcription
-        transcriber = VoiceTranscriber(engine=engine)
+        transcriber = VoiceTranscriber(engine=engine, use_xdotool=use_xdotool)
         transcriber.transcribe()
         return
 
     command = args[0].lower()
-    transcriber = VoiceTranscriber(engine=engine)
+    transcriber = VoiceTranscriber(engine=engine, use_xdotool=use_xdotool)
     
     if command == "status":
         transcriber.print_status()
@@ -375,7 +381,8 @@ def main():
                 print(f"  {code}: {info['name']}")
     else:
         print("Usage:")
-        print("  ./voice_transcription.py                      # Start transcription (AssemblyAI)")
+        print("  ./voice_transcription.py                      # Start transcription (clipboard mode)")
+        print("  ./voice_transcription.py --xdotool            # Use xdotool type instead of clipboard")
         print("  ./voice_transcription.py --engine assemblyai  # Use AssemblyAI (default)")
         print("  ./voice_transcription.py --engine elevenlabs  # Use ElevenLabs")
         print("  ./voice_transcription.py status               # Show system status")
