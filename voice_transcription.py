@@ -204,9 +204,6 @@ class VoiceTranscriber:
                 )
                 return False
 
-            # Show initial notification
-            self.notification.show_notification(f"🎤 Recording with {engine_name}", urgency="normal")
-
             # Reset stop flag and remove any existing stop file
             self.stop_flag['stop'] = False
             if os.path.exists(self.stop_file):
@@ -253,7 +250,6 @@ class VoiceTranscriber:
             else:
                 self.logger.info(f"Transcription session ended with no speech detected ({elapsed:.1f}s)")
                 print("No speech detected")
-                self.notification.show_notification("No speech detected", urgency="low")
                 return False
         
         except KeyboardInterrupt:
@@ -302,7 +298,6 @@ class VoiceTranscriber:
                 except:
                     pass
 
-            self.notification.show_notification("🛑 Recording stopped", urgency="normal")
         except Exception as e:
             print(f"Error creating stop file: {e}")
             self.stop_flag['stop'] = True
