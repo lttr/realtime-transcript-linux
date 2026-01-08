@@ -171,9 +171,15 @@ class VoiceTranscriber:
         """Release instance lock"""
         try:
             if os.path.exists(self.lock_file):
-                os.remove(self.lock_file)
+                # Only remove if we own the lock (our PID matches)
+                with open(self.lock_file, 'r') as f:
+                    lock_pid = int(f.read().strip())
+                if lock_pid == os.getpid():
+                    os.remove(self.lock_file)
+        except FileNotFoundError:
+            pass  # Already removed (e.g., by stop command)
         except Exception as e:
-            self.logger.error(f"Lock release error: {e}")
+            self.logger.debug(f"Lock release: {e}")
     
     def transcribe(self):
         """Main transcription method using selected API"""
@@ -267,6 +273,16 @@ class VoiceTranscriber:
             with open(self.stop_file, 'w') as f:
                 f.write(str(time.time()))
             self.stop_flag['stop'] = True
+
+            # Remove lock file immediately so a new session can start
+            # The old session will finish cleanup in background
+            if os.path.exists(self.lock_file):
+                try:
+                    os.remove(self.lock_file)
+                    self.logger.info("Lock released for immediate restart")
+                except:
+                    pass
+
             self.notification.show_notification("🛑 Recording stopped", urgency="normal")
         except Exception as e:
             print(f"Error creating stop file: {e}")

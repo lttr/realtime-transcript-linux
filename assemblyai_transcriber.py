@@ -251,6 +251,7 @@ class AssemblyAITranscriber:
                 """Monitor for silence timeout"""
                 max_duration = 300  # Maximum recording duration (5 minutes)
                 start_time = time.time()
+                stop_file = "/tmp/voice_transcription_stop.flag"
 
                 while not self.stop_streaming.is_set():
                     time.sleep(0.5)  # Check every 0.5 seconds
@@ -268,9 +269,19 @@ class AssemblyAITranscriber:
                         self.stop_streaming.set()
                         break
 
-                    # Check stop flag
+                    # Check stop flag (in-memory)
                     if stop_flag and stop_flag.get('stop', False):
                         self.logger.info("Stop flag set, stopping...")
+                        self.stop_streaming.set()
+                        break
+
+                    # Check stop file (inter-process communication)
+                    if os.path.exists(stop_file):
+                        self.logger.info("Stop file detected, stopping...")
+                        try:
+                            os.remove(stop_file)
+                        except:
+                            pass
                         self.stop_streaming.set()
                         break
 
