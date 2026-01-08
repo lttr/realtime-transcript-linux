@@ -7,6 +7,7 @@ import time
 from audio_utils import AudioCapture, NotificationHelper, TextInjector
 from elevenlabs_transcriber import ElevenLabsTranscriber
 from assemblyai_transcriber import AssemblyAITranscriber
+from visual_indicator import AudioIndicator
 
 
 class VoiceTranscriber:
@@ -20,6 +21,9 @@ class VoiceTranscriber:
 
         # AudioCapture only needed for ElevenLabs, but we initialize it lazily
         self.audio_capture = None
+
+        # Visual indicator for audio levels
+        self.indicator = AudioIndicator()
 
         # Default engine configuration
         self.engine = engine.lower()
@@ -208,6 +212,9 @@ class VoiceTranscriber:
             if os.path.exists(self.stop_file):
                 os.remove(self.stop_file)
 
+            # Show visual indicator
+            self.indicator.show()
+
             # Start transcription with selected engine
             start_time = time.time()
 
@@ -221,7 +228,8 @@ class VoiceTranscriber:
                     None,  # audio_capture not used
                     text_callback=self._handle_transcription_result,
                     stop_flag=self.stop_flag,
-                    language=language_code
+                    language=language_code,
+                    volume_callback=self.indicator.update_level
                 )
             else:  # elevenlabs
                 # Initialize AudioCapture for ElevenLabs if not already done
@@ -262,6 +270,8 @@ class VoiceTranscriber:
             return False
         
         finally:
+            # Hide visual indicator
+            self.indicator.hide()
             # Always release the lock
             self._release_lock()
     

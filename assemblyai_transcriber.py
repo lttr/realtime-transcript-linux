@@ -71,7 +71,7 @@ class AssemblyAITranscriber:
         # Prefer parecord (PulseAudio/PipeWire) - works on modern GNOME
         if shutil.which('parecord'):
             return ['parecord', '--raw', '--rate', str(self.sample_rate),
-                    '--channels', '1', '--format=s16le']
+                    '--channels', '1', '--format=s16le', '--latency-msec=50']
         # Fallback to arecord (ALSA)
         if shutil.which('arecord'):
             return ['arecord', '-q', '-f', 'S16_LE', '-r', str(self.sample_rate),
@@ -181,7 +181,7 @@ class AssemblyAITranscriber:
 
         return on_begin, on_turn, on_terminated, on_error
 
-    def transcribe_streaming(self, audio_capture, text_callback=None, stop_flag=None, language: str = "en") -> str:
+    def transcribe_streaming(self, audio_capture, text_callback=None, stop_flag=None, language: str = "en", volume_callback=None) -> str:
         """
         Perform streaming transcription with progressive results
 
@@ -190,6 +190,7 @@ class AssemblyAITranscriber:
             text_callback: Function called with each transcribed phrase
             stop_flag: Shared dictionary to signal stop
             language: Language code for transcription (default: en, None for auto)
+            volume_callback: Function called with audio volume level for visual indicator
 
         Returns:
             Complete transcribed text
@@ -313,6 +314,14 @@ class AssemblyAITranscriber:
                             data = self.recorder_process.stdout.read(self.chunk_bytes)
                             if not data or len(data) < self.chunk_bytes:
                                 break
+                            # Calculate volume and call callback for visual indicator
+                            if volume_callback:
+                                try:
+                                    audio_array = np.frombuffer(data, dtype=np.int16)
+                                    volume = np.sqrt(np.mean(audio_array.astype(np.float32) ** 2))
+                                    volume_callback(volume)
+                                except Exception:
+                                    pass
                             yield data
                     finally:
                         if self.recorder_process:
