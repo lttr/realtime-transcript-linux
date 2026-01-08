@@ -20,7 +20,7 @@ class AudioCapture:
         # VAD settings
         self.silence_threshold = 50
         self.short_pause_frames = int(sample_rate / chunk_size * 1.5)  # 1.5s phrase boundary
-        self.long_pause_frames = int(sample_rate / chunk_size * 4.0)   # 4s end recording
+        self.long_pause_frames = int(sample_rate / chunk_size * 5.0)   # 5s end recording
         self.min_phrase_frames = int(sample_rate / chunk_size * 2.0)   # Min 2s for phrase
 
         self.logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ class AudioCapture:
                     '-c', str(self.channels), '-t', 'raw']
         raise RuntimeError("No audio recorder found. Install pulseaudio-utils or alsa-utils.")
 
-    def capture_streaming_audio(self, max_duration=300, callback=None, stop_flag=None):
+    def capture_streaming_audio(self, max_duration=180, callback=None, stop_flag=None):
         """
         Capture audio with streaming processing on natural speech pauses
 
