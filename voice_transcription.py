@@ -237,7 +237,8 @@ class VoiceTranscriber:
                     self.audio_capture,
                     text_callback=self._handle_transcription_result,
                     stop_flag=self.stop_flag,
-                    language=language_code
+                    language=language_code,
+                    volume_callback=self.indicator.update_level
                 )
 
             elapsed = time.time() - start_time

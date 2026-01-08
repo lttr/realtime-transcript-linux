@@ -33,14 +33,14 @@ class AudioCapture:
         # Prefer parecord (PulseAudio/PipeWire) - works on modern GNOME
         if shutil.which('parecord'):
             return ['parecord', '--raw', '--rate', str(self.sample_rate),
-                    '--channels', str(self.channels), '--format=s16le']
+                    '--channels', str(self.channels), '--format=s16le', '--latency-msec=50']
         # Fallback to arecord (ALSA)
         if shutil.which('arecord'):
             return ['arecord', '-q', '-f', 'S16_LE', '-r', str(self.sample_rate),
                     '-c', str(self.channels), '-t', 'raw']
         raise RuntimeError("No audio recorder found. Install pulseaudio-utils or alsa-utils.")
 
-    def capture_streaming_audio(self, max_duration=180, callback=None, stop_flag=None):
+    def capture_streaming_audio(self, max_duration=180, callback=None, stop_flag=None, volume_callback=None):
         """
         Capture audio with streaming processing on natural speech pauses
 
@@ -48,6 +48,7 @@ class AudioCapture:
             max_duration: Maximum recording duration in seconds
             callback: Function called with audio chunks when phrase detected
             stop_flag: Shared flag to stop recording externally
+            volume_callback: Function called with volume level for visual indicator
 
         Returns:
             List of all audio frames captured
@@ -101,6 +102,13 @@ class AudioCapture:
 
                 # Voice activity detection
                 volume = self._calculate_volume(data)
+
+                # Call volume callback for visual indicator
+                if volume_callback:
+                    try:
+                        volume_callback(volume)
+                    except:
+                        pass
 
                 if volume > self.silence_threshold:
                     if not recording_started:

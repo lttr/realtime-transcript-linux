@@ -288,16 +288,17 @@ class ElevenLabsTranscriber:
         self.logger.error("All retry attempts failed")
         return None
     
-    def transcribe_streaming(self, audio_capture: AudioCapture, text_callback=None, stop_flag=None, language: str = "en") -> str:
+    def transcribe_streaming(self, audio_capture: AudioCapture, text_callback=None, stop_flag=None, language: str = "en", volume_callback=None) -> str:
         """
         Perform streaming transcription with progressive results
-        
+
         Args:
             audio_capture: AudioCapture instance
             text_callback: Function called with each transcribed phrase
             stop_flag: Shared dictionary to signal stop
             language: Language code for transcription (default: en)
-            
+            volume_callback: Function called with audio volume level for visual indicator
+
         Returns:
             Complete transcribed text
         """
@@ -338,7 +339,8 @@ class ElevenLabsTranscriber:
         # Capture audio with streaming processing
         audio_capture.capture_streaming_audio(
             callback=process_audio_chunk,
-            stop_flag=stop_flag
+            stop_flag=stop_flag,
+            volume_callback=volume_callback
         )
         
         return full_text.strip()

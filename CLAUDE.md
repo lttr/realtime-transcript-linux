@@ -16,7 +16,11 @@ A real-time voice transcription system for Linux GNOME that captures speech via 
 - **`assemblyai_transcriber.py`**: AssemblyAI streaming API client (default engine)
 - **`elevenlabs_transcriber.py`**: ElevenLabs API client with .env file support and retry logic (alternative engine)
 - **`audio_utils.py`**: Shared audio processing utilities (VAD, text injection, notifications)
+- **`visual_indicator.py`**: Audio level indicator wrapper (spawns GTK subprocess)
+- **`visual_indicator_gtk.py`**: GTK-based floating overlay for real-time audio visualization
 - **`.env`**: API key configuration file (create from `.env.example`)
+
+**IMPORTANT**: When adding features to transcription (e.g., callbacks, parameters), update BOTH `assemblyai_transcriber.py` AND `elevenlabs_transcriber.py` to maintain feature parity.
 
 ### Processing Flow
 
