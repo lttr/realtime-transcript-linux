@@ -270,7 +270,16 @@ class VoiceTranscriber:
             return False
         
         finally:
-            # Hide visual indicator
+            # Show stop flash if user-initiated stop (check stop file), then hide
+            was_stopped = os.path.exists(self.stop_file) or self.stop_flag.get('stop')
+            if was_stopped:
+                self.indicator.stop_signal()
+                time.sleep(0.35)  # Let flash show
+                # Clean up stop file
+                try:
+                    os.remove(self.stop_file)
+                except:
+                    pass
             self.indicator.hide()
             # Always release the lock
             self._release_lock()

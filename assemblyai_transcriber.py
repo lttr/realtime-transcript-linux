@@ -277,12 +277,9 @@ class AssemblyAITranscriber:
                         break
 
                     # Check stop file (inter-process communication)
+                    # Don't delete - let voice_transcription.py handle cleanup after showing stop indicator
                     if os.path.exists(stop_file):
                         self.logger.info("Stop file detected, stopping...")
-                        try:
-                            os.remove(stop_file)
-                        except:
-                            pass
                         self.stop_streaming.set()
                         break
 

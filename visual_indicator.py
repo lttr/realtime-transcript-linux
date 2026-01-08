@@ -56,6 +56,15 @@ class AudioIndicator:
                 except:
                     pass
 
+    def stop_signal(self):
+        """Signal stop (shows brief flash before hiding)."""
+        if self.process and self.process.poll() is None:
+            try:
+                with open(self.level_file, 'w') as f:
+                    f.write("stop\n")
+            except:
+                pass
+
     def hide(self):
         """Hide and clean up the indicator."""
         if self.process:

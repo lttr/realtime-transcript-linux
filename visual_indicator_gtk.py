@@ -26,6 +26,12 @@ class AudioIndicatorWindow(Gtk.Window):
         self.levels = [0.0] * num_bars
         self.last_volume = 0.0
         self.decay_rate = 0.92  # Slower fade out
+        self.silence_start = None  # Track when silence began
+        self.silence_threshold = 0.12  # Below this = silence (normalized)
+        self.bars_to_hide = 0
+        self.all_bars_hidden_time = None  # When all bars disappeared
+        self.stop_mode = False  # Stop signal received
+        self.stop_time = None  # When stop was triggered
 
         # Window properties
         self.set_decorated(False)
@@ -62,11 +68,27 @@ class AudioIndicatorWindow(Gtk.Window):
 
     def _poll_and_refresh(self):
         """Read level from file and refresh display with decay effect."""
+        import time
+
+        # Handle stop mode animation
+        if self.stop_mode:
+            if time.time() - self.stop_time > 0.3:
+                Gtk.main_quit()
+                return False
+            self.drawing_area.queue_draw()
+            return True
+
         new_level = None
         try:
             if os.path.exists(LEVEL_FILE):
                 with open(LEVEL_FILE, 'r') as f:
-                    volume = float(f.read().strip())
+                    content = f.read().strip()
+                    if content == "stop":
+                        self.stop_mode = True
+                        self.stop_time = time.time()
+                        self.drawing_area.queue_draw()
+                        return True
+                    volume = float(content)
                     new_level = min(1.0, max(0.0, volume / 250.0))
         except:
             pass
@@ -79,17 +101,60 @@ class AudioIndicatorWindow(Gtk.Window):
             # New audio level - use it
             self.levels[-1] = new_level
             self.last_volume = new_level
+
+        # Track silence duration
+        if new_level is not None and new_level > self.silence_threshold:
+            # Sound detected - only reset if we haven't fully counted down
+            if self.bars_to_hide < self.num_bars:
+                self.silence_start = None
+                self.bars_to_hide = 0
+                self.all_bars_hidden_time = None
         else:
-            # No new input - decay the last bar slowly
-            self.levels[-1] = self.levels[-1] * self.decay_rate
+            # Silence - start or continue tracking
+            if self.silence_start is None:
+                self.silence_start = time.time()
+            # Calculate how many bars to hide based on silence duration
+            silence_seconds = time.time() - self.silence_start
+            self.bars_to_hide = min(self.num_bars, int(silence_seconds))
+
+            # Track when all bars became hidden
+            if self.bars_to_hide >= self.num_bars and self.all_bars_hidden_time is None:
+                self.all_bars_hidden_time = time.time()
+
+        # Should we hide background too?
+        self.hide_background = False
+        if self.all_bars_hidden_time is not None:
+            if time.time() - self.all_bars_hidden_time >= 1.0:
+                self.hide_background = True
 
         self.drawing_area.queue_draw()
         return True  # Continue polling
 
     def _on_draw(self, widget, cr):
         """Draw the audio level bars."""
+        # Hide everything if background should be hidden
+        if getattr(self, 'hide_background', False):
+            return False
+
         width = widget.get_allocated_width()
         height = widget.get_allocated_height()
+
+        # Stop mode - solid horizontal line at bottom
+        if self.stop_mode:
+            # Dark background
+            cr.set_source_rgba(0.12, 0.12, 0.12, 0.75)
+            radius = 4
+            cr.arc(radius, radius, radius, 3.14159, 1.5 * 3.14159)
+            cr.arc(width - radius, radius, radius, 1.5 * 3.14159, 2 * 3.14159)
+            cr.arc(width - radius, height - radius, radius, 0, 0.5 * 3.14159)
+            cr.arc(radius, height - radius, radius, 0.5 * 3.14159, 3.14159)
+            cr.close_path()
+            cr.fill()
+            # Subtle white line at bottom
+            cr.set_source_rgba(1.0, 1.0, 1.0, 0.5)
+            cr.rectangle(12, height - 6, width - 24, 2)
+            cr.fill()
+            return False
 
         # Dark background with rounded corners
         cr.set_source_rgba(0.12, 0.12, 0.12, 0.75)
@@ -108,7 +173,14 @@ class AudioIndicatorWindow(Gtk.Window):
         padding = (width - total_bars_width) / 2
         max_bar_height = height - 8
 
+        # How many bars to hide from left (countdown during silence)
+        bars_to_hide = getattr(self, 'bars_to_hide', 0)
+
         for i, level in enumerate(self.levels):
+            # Skip bars hidden from the left during silence countdown
+            if i < bars_to_hide:
+                continue
+
             x = padding + i * (bar_width + bar_gap)
             bar_height = max(2, level * max_bar_height)
             y = height - 4 - bar_height
