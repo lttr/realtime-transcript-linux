@@ -249,7 +249,7 @@ class AssemblyAITranscriber:
 
             def timeout_monitor():
                 """Monitor for silence timeout"""
-                max_duration = 45  # Maximum recording duration
+                max_duration = 300  # Maximum recording duration (5 minutes)
                 start_time = time.time()
 
                 while not self.stop_streaming.is_set():

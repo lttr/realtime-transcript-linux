@@ -150,7 +150,7 @@ Located in `audio_utils.py` AudioCapture class:
 - Short pause: 1.5s (phrase boundary - transcribe and continue)
 - Long pause: 4s (end recording session)
 - Minimum phrase: 2s (avoid processing tiny fragments)
-- Maximum duration: 45s (total recording time limit)
+- Maximum duration: 300s / 5 minutes (total recording time limit)
 - Silence threshold: 50 (volume level for speech detection)
 
 ### Common Issues

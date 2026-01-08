@@ -40,7 +40,7 @@ class AudioCapture:
                     '-c', str(self.channels), '-t', 'raw']
         raise RuntimeError("No audio recorder found. Install pulseaudio-utils or alsa-utils.")
 
-    def capture_streaming_audio(self, max_duration=45, callback=None, stop_flag=None):
+    def capture_streaming_audio(self, max_duration=300, callback=None, stop_flag=None):
         """
         Capture audio with streaming processing on natural speech pauses
 
