@@ -130,6 +130,29 @@ class AssemblyAITranscriber:
             self.logger.debug(f"API availability check error: {e}")
             return False
 
+    def _get_keyterms(self):
+        """Key terms to boost recognition accuracy ($0.04/hr add-on, max 100 terms, 50 chars each)"""
+        return [
+            # AI / LLM
+            "Claude", "Claude Code", "Claude AI", "Anthropic",
+            "ChatGPT", "OpenAI", "Cursor", "Copilot",
+            "LLM", "MCP", "API",
+            # Frontend
+            "Vue", "Nuxt", "React", "Next.js", "Svelte",
+            "TypeScript", "JavaScript", "Tailwind", "Vite",
+            "composables", "components", "middleware",
+            # Dev tools
+            "pnpm", "npm", "npx", "Node.js",
+            "package.json", "tsconfig", "ESLint", "Prettier",
+            "Docker", "GitHub", "Git",
+            # System
+            "Linux", "GNOME", "Ubuntu", "PipeWire", "PulseAudio",
+            "systemd", "systemctl",
+            # General dev
+            "refactor", "deploy", "localhost", "webhook",
+            "PostgreSQL", "Prisma", "Redis",
+        ]
+
     def _create_event_handlers(self):
         """Create event handler functions that have access to self"""
         transcriber = self  # Capture self in closure
@@ -236,6 +259,12 @@ class AssemblyAITranscriber:
             # Connect to streaming service
             self.logger.info("Connecting to AssemblyAI streaming service...")
             client.connect(params)
+
+            # Send keyterms after connection (can't be URL-encoded in connect params)
+            keyterms = self._get_keyterms()
+            if keyterms:
+                self.logger.info(f"Sending {len(keyterms)} keyterms for vocabulary boosting")
+                client.set_params(StreamingSessionParameters(keyterms_prompt=keyterms))
 
             # Create microphone stream
             self.logger.info("Starting microphone stream...")
