@@ -139,6 +139,7 @@ class AudioCapture:
                             callback(audio_chunk)
 
                         phrase_frames = []
+                        silence_frames = 0  # Reset so long-pause needs fresh 5s of silence
 
                     # Long pause = end recording
                     elif silence_frames > self.long_pause_frames:
