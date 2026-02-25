@@ -1,0 +1,4 @@
+#!/bin/bash
+# Shell wrapper for keybinding integration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec deno run --env-file="$SCRIPT_DIR/.env" -A "$SCRIPT_DIR/elevenlabs-transcriber/transcribe.ts" "$@"
