@@ -19,7 +19,7 @@ class VoiceTranscriber:
         self.text_injector = TextInjector(use_xdotool=use_xdotool)
         self.notification = NotificationHelper()
 
-        # AudioCapture only needed for ElevenLabs, but we initialize it lazily
+        # AudioCapture no longer needed (both engines capture audio directly)
         self.audio_capture = None
 
         # Visual indicator for audio levels
@@ -229,12 +229,8 @@ class VoiceTranscriber:
                     volume_callback=self.indicator.update_level
                 )
             else:  # elevenlabs
-                # Initialize AudioCapture for ElevenLabs if not already done
-                if self.audio_capture is None:
-                    self.audio_capture = AudioCapture()
-
                 final_text = self.elevenlabs.transcribe_streaming(
-                    self.audio_capture,
+                    None,  # audio_capture not used - ElevenLabs captures directly
                     text_callback=self._handle_transcription_result,
                     stop_flag=self.stop_flag,
                     language=language_code,
