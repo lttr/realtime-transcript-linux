@@ -2,22 +2,23 @@
 
 ## Project Overview
 
-Real-time voice transcription for Linux GNOME. Captures speech via global shortcut, injects text into active window. Dual-engine: AssemblyAI (default streaming) and ElevenLabs (chunk-based alternative).
+Real-time voice transcription for Linux GNOME. Captures speech via global shortcut, injects text into active window. Dual-engine: AssemblyAI (default) and ElevenLabs Scribe v2 Realtime. Both use WebSocket streaming with ~150ms latency.
 
 ## Key Rules
 
 - When adding transcription features (callbacks, params), update BOTH `assemblyai_transcriber.py` AND `elevenlabs_transcriber.py` for feature parity
 - Audio capture uses system `parecord`/`arecord` subprocess, NOT PyAudio
-- AssemblyAI transcriber manages its own mic; ElevenLabs uses shared `AudioCapture`
+- Both transcribers manage their own mic subprocess directly
+- ElevenLabs uses `previous_text` on first audio chunk for vocabulary priming (equivalent of AssemblyAI's `keyterms_prompt`)
 
 ## Module Map
 
 | File | Role |
 |------|------|
 | `voice_transcription.py` | Orchestrator, CLI, instance locking, engine selection |
-| `assemblyai_transcriber.py` | Streaming API client, own audio capture, event-driven |
-| `elevenlabs_transcriber.py` | Chunk-based API client, uses AudioCapture, retry logic |
-| `audio_utils.py` | AudioCapture (VAD), TextInjector, NotificationHelper |
+| `assemblyai_transcriber.py` | WebSocket streaming via SDK, own audio capture, event-driven |
+| `elevenlabs_transcriber.py` | WebSocket streaming (Scribe v2 Realtime), own audio capture, server VAD |
+| `audio_utils.py` | AudioCapture (VAD, used by HTTP fallback only), TextInjector, NotificationHelper |
 | `visual_indicator.py` | Wrapper - spawns GTK subprocess, IPC via temp file |
 | `visual_indicator_gtk.py` | GTK3 floating overlay, audio level bars |
 

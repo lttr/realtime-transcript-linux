@@ -13,11 +13,10 @@ graph TD
     ENGINE -->|alternative| EL[elevenlabs_transcriber.py]
 
     AAI --> MIC1[parecord / arecord]
-    EL --> AC[AudioCapture]
-    AC --> MIC2[parecord / arecord]
+    EL --> MIC2[parecord / arecord]
 
     AAI -->|streaming events| CB[text callback]
-    EL -->|phrase chunks| CB
+    EL -->|committed transcripts| CB
     CB --> TI[TextInjector]
     TI --> WIN[Active Window]
 
@@ -28,7 +27,7 @@ graph TD
 
 ## Engine Comparison
 
-The two engines differ fundamentally in how they handle audio and detect phrase boundaries. AssemblyAI uses a persistent WebSocket connection with server-side turn detection. ElevenLabs relies on client-side VAD to split audio into chunks sent as individual HTTP requests.
+Both engines use WebSocket streaming with server-side speech detection. AssemblyAI uses its SDK's streaming client with turn-based events. ElevenLabs uses a direct WebSocket connection to Scribe v2 Realtime with server-side VAD.
 
 ```mermaid
 graph LR
@@ -39,19 +38,20 @@ graph LR
     end
 
     subgraph EL[ElevenLabs - Alternative]
-        E1[AudioCapture with VAD] --> E2[1.5s silence = phrase boundary]
-        E2 --> E3[HTTP POST chunk]
+        E1[Direct mic subprocess] --> E2[WebSocket streaming]
+        E2 --> E3[Server VAD commits transcript]
         E3 --> E4[Inject phrase]
     end
 ```
 
 | Aspect | AssemblyAI | ElevenLabs |
 |--------|-----------|------------|
-| Protocol | WebSocket streaming | HTTP POST per chunk |
-| Audio handling | Own subprocess + timeout thread | Shared AudioCapture with VAD |
-| Phrase detection | Server-side turn events | Client-side 1.5s silence threshold |
-| Retry logic | Reconnect on error | 2 retries with exponential backoff |
-| Latency | Real-time streaming | ~0.7-2.1s per phrase |
+| Protocol | WebSocket (SDK) | WebSocket (direct) |
+| Model | Streaming v3 | Scribe v2 Realtime |
+| Audio handling | Own subprocess + threads | Own subprocess + threads |
+| Phrase detection | Server-side turn events | Server-side VAD (1.5s silence) |
+| Vocabulary priming | `keyterms_prompt` (list) | `previous_text` (context string) |
+| Latency | ~150ms partials | ~150ms partials |
 
 ## Audio Pipeline
 
@@ -119,5 +119,7 @@ Default injection uses clipboard (`xsel`) + paste keystroke because `xdotool typ
 ### Instance Locking
 PID-based lock file prevents overlapping sessions. Checks if PID is still alive before acquiring, auto-cleans stale locks from crashed sessions.
 
-### Keyterms Boosting (AssemblyAI)
-~50 tech vocabulary terms (Git, TypeScript, Docker, etc.) improve recognition accuracy for developer-focused dictation.
+### Vocabulary Priming
+Both engines support priming the model with domain-specific terms:
+- **AssemblyAI**: `keyterms_prompt` - list of terms sent after connection
+- **ElevenLabs**: `previous_text` field on first audio chunk - context string that primes the model for tech vocabulary
