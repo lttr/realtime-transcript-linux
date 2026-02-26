@@ -5,6 +5,8 @@
  * Port of visual_indicator_gtk.py for zero-Python Deno setup.
  */
 
+imports.gi.versions.Gtk = "3.0";
+imports.gi.versions.Gdk = "3.0";
 const { Gtk, Gdk, GLib } = imports.gi;
 
 const LEVEL_FILE = "/tmp/voice_indicator_level";

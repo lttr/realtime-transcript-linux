@@ -202,11 +202,6 @@ function stopIndicator(proc: Deno.ChildProcess | null) {
   }, 350);
 }
 
-function hideIndicator(proc: Deno.ChildProcess | null) {
-  try { proc?.kill("SIGTERM"); } catch { /* ignore */ }
-  try { Deno.removeSync(LEVEL_FILE); } catch { /* ignore */ }
-  try { Deno.removeSync(LEVEL_FILE + ".tmp"); } catch { /* ignore */ }
-}
 
 // --- Text injection ---
 
@@ -295,19 +290,13 @@ async function transcribe() {
   let recorderProc: Deno.ChildProcess | null = null;
   let ws: WebSocket | null = null;
   let fullText = "";
-  let lastCommittedTime = Date.now();
-  let wasStopped = false;
-
+  let lastActivityTime = Date.now();
   async function cleanup() {
     ac.abort();
     try { recorderProc?.kill("SIGTERM"); } catch { /* ignore */ }
     try { ws?.close(); } catch { /* ignore */ }
-    if (wasStopped) {
-      stopIndicator(indicatorProc);
-      await new Promise((r) => setTimeout(r, 400));
-    } else {
-      hideIndicator(indicatorProc);
-    }
+    stopIndicator(indicatorProc);
+    await new Promise((r) => setTimeout(r, 400));
     try { await Deno.remove(STOP_FILE).catch(() => {}); } catch { /* ignore */ }
     releaseLock();
   }
@@ -438,11 +427,14 @@ async function transcribe() {
               info(`Session started: ${msg.session_id}`);
             } else if (msgType === "partial_transcript") {
               const text = (msg.text ?? "").trim();
-              if (text) debug(`Partial: '${text.slice(0, 60)}'`);
+              if (text) {
+                lastActivityTime = Date.now();
+                debug(`Partial: '${text.slice(0, 60)}'`);
+              }
             } else if (msgType === "committed_transcript" || msgType === "committed_transcript_with_timestamps") {
               const text = stripAudioEvents(msg.text ?? "");
               if (text) {
-                lastCommittedTime = Date.now();
+                lastActivityTime = Date.now();
                 info(`Committed: '${text}'`);
                 if (fullText && !fullText.endsWith(" ")) fullText += " ";
                 fullText += text;
@@ -485,7 +477,7 @@ async function transcribe() {
         }
 
         // Silence timeout (only if we have text)
-        const silenceMs = Date.now() - lastCommittedTime;
+        const silenceMs = Date.now() - lastActivityTime;
         if (silenceMs > SILENCE_TIMEOUT_MS && fullText.trim()) {
           info(`Silence detected for ${(silenceMs / 1000).toFixed(1)}s, stopping...`);
           break;
@@ -494,7 +486,6 @@ async function transcribe() {
         // Stop file (inter-process)
         if (fileExistsSync(STOP_FILE)) {
           info("Stop file detected, stopping...");
-          wasStopped = true;
           break;
         }
       }
@@ -502,7 +493,6 @@ async function transcribe() {
     }
 
     // Run all three loops concurrently
-    notify("Recording started");
     await Promise.race([
       Promise.all([sendAudioLoop(), receiveLoop(), monitorLoop()]),
       new Promise<void>((resolve) => {
