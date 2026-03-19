@@ -50,6 +50,7 @@ function log(level: string, msg: string) {
   const line = `${ts} - ${level} - ${msg}`;
   if (level === "ERROR") console.error(line);
   else console.log(line);
+  if (level === "DEBUG") return;
   try {
     logFd?.writeSync(new TextEncoder().encode(line + "\n"));
   } catch { /* ignore */ }
@@ -116,7 +117,6 @@ async function acquireLock(): Promise<boolean> {
       const oldPid = parseInt(content.trim(), 10);
       if (!isNaN(oldPid) && processAlive(oldPid)) {
         info("Another transcription session is already active");
-        notify("Already recording", "normal");
         return false;
       }
       info("Removing stale lock file");
@@ -243,7 +243,7 @@ async function clipboardInject(text: string) {
 
   // Paste with Ctrl+Shift+V (works in both terminals and GUI apps on Wayland)
   await new Deno.Command("wtype", {
-    args: ["-M", "ctrl", "-M", "shift", "-P", "v", "-m", "shift", "-m", "ctrl"],
+    args: ["-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"],
     stdout: "null", stderr: "null",
   }).output();
 }
@@ -317,7 +317,7 @@ async function transcribe() {
     if (language) params.set("language_code", language);
     const wsUrl = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params}`;
 
-    // Connect WebSocket
+    // Connect WebSocket (npm:ws supports custom headers, unlike browser WebSocket)
     info("Connecting to ElevenLabs WebSocket...");
     ws = new WebSocket(wsUrl, { headers: { "xi-api-key": apiKey } });
 
@@ -337,7 +337,7 @@ async function transcribe() {
 
     let recorderCmd: string[];
     if (pwRecordPath) {
-      recorderCmd = [pwRecordPath, "--format=s16", `--rate=${SAMPLE_RATE}`, "--channels=1", "-"];
+      recorderCmd = [pwRecordPath, "--raw", "--format=s16", `--rate=${SAMPLE_RATE}`, "--channels=1", "-"];
     } else if (parecordPath) {
       recorderCmd = [parecordPath, "--raw", "--rate", String(SAMPLE_RATE), "--channels", "1", "--format=s16le", "--latency-msec=50"];
     } else if (arecordPath) {
@@ -360,7 +360,6 @@ async function transcribe() {
       const reader = recorderProc!.stdout.getReader();
       let buffer = new Uint8Array(0);
       let firstChunk = true;
-
       try {
         while (!ac.signal.aborted) {
           const { value, done } = await reader.read();
@@ -498,8 +497,10 @@ async function transcribe() {
 
     if (fullText.trim()) {
       info(`Transcription complete: '${fullText.trim()}'`);
+      notify(`Done: ${fullText.trim().slice(0, 80)}`);
     } else {
       info("No speech detected");
+      notify("No speech detected");
     }
   } catch (e) {
     error(`Transcription error: ${e}`);
@@ -522,8 +523,6 @@ async function findCommand(name: string): Promise<string | null> {
 async function cmdStop() {
   try {
     await Deno.writeTextFile(STOP_FILE, String(Date.now()));
-    // Remove lock for immediate restart
-    await Deno.remove(LOCK_FILE).catch(() => {});
     console.log("Stop signal sent");
   } catch (e) {
     console.error(`Error: ${e}`);
@@ -538,11 +537,13 @@ async function cmdStatus() {
   }
   console.log("Testing ElevenLabs API connectivity...");
   try {
-    const resp = await fetch("https://api.elevenlabs.io/v1/models", {
+    const resp = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
+      method: "POST",
       headers: { "xi-api-key": apiKey },
       signal: AbortSignal.timeout(5000),
     });
-    if (resp.ok) {
+    // 400/422 = authenticated but bad request (no audio), 401 = auth failure
+    if (resp.status === 400 || resp.status === 422 || resp.ok) {
       console.log("ElevenLabs: connected");
     } else {
       console.log(`ElevenLabs: HTTP ${resp.status}`);
