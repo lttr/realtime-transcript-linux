@@ -5,7 +5,6 @@
  */
 
 import { encodeBase64 } from "jsr:@std/encoding@1/base64";
-import WebSocket from "npm:ws@8";
 
 // --- Constants ---
 
@@ -106,6 +105,17 @@ function fileExistsSync(path: string): boolean {
 
 async function readTextFile(path: string): Promise<string | null> {
   try { return await Deno.readTextFile(path); } catch { return null; }
+}
+
+async function getRealtimeToken(apiKey: string): Promise<string> {
+  const resp = await fetch("https://api.elevenlabs.io/v1/single-use-token/realtime_scribe", {
+    method: "POST",
+    headers: { "xi-api-key": apiKey },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!resp.ok) throw new Error(`Token request failed: HTTP ${resp.status}`);
+  const { token } = await resp.json();
+  return token;
 }
 
 // --- Instance locking ---
@@ -264,6 +274,21 @@ async function getLanguage(): Promise<string | null> {
 // --- Main transcription ---
 
 async function transcribe() {
+  // Dump env + fd info for debugging Cosmic Spawn issues
+  try {
+    const env = Object.entries(Deno.env.toObject()).sort().map(([k, v]) => `${k}=${v}`).join("\n");
+    // Check what stdin/stdout/stderr point to
+    let fdInfo = "";
+    for (const fd of [0, 1, 2]) {
+      try {
+        const link = await Deno.readLink(`/proc/self/fd/${fd}`);
+        fdInfo += `fd${fd} -> ${link}\n`;
+      } catch (e) { fdInfo += `fd${fd} -> error: ${e}\n`; }
+    }
+    await Deno.writeTextFile("/tmp/voice_transcription_env.log", fdInfo + "\n" + env + "\n");
+    info("Environment dumped to /tmp/voice_transcription_env.log");
+  } catch { /* ignore */ }
+
   // Check Wayland tools are available
   for (const tool of ["wl-copy", "wtype"]) {
     if (!(await findCommand(tool))) {
@@ -307,23 +332,28 @@ async function transcribe() {
     const language = await getLanguage();
     info(`Language: ${language ?? "auto-detect"}`);
 
+    // Get single-use token (native Deno WebSocket has no custom header support)
+    info("Requesting single-use token...");
+    const token = await getRealtimeToken(apiKey);
+
     // Build WebSocket URL
     const params = new URLSearchParams({
       model_id: "scribe_v2_realtime",
       commit_strategy: "vad",
       vad_silence_threshold_secs: String(VAD_SILENCE_SECS),
       audio_format: `pcm_${SAMPLE_RATE}`,
+      token,
     });
     if (language) params.set("language_code", language);
     const wsUrl = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params}`;
 
-    // Connect WebSocket (npm:ws supports custom headers, unlike browser WebSocket)
+    // Connect WebSocket (native Deno WebSocket - works in all process contexts)
     info("Connecting to ElevenLabs WebSocket...");
-    ws = new WebSocket(wsUrl, { headers: { "xi-api-key": apiKey } });
+    ws = new WebSocket(wsUrl);
 
     await new Promise<void>((resolve, reject) => {
-      ws!.once("open", () => { info("WebSocket connected"); resolve(); });
-      ws!.once("error", (e: Error) => reject(e));
+      ws!.onopen = () => { info("WebSocket connected"); resolve(); };
+      ws!.onerror = (e) => reject(e);
       setTimeout(() => reject(new Error("WebSocket connection timeout")), 10_000);
     });
 
@@ -408,11 +438,10 @@ async function transcribe() {
     // --- Receive loop ---
     async function receiveLoop() {
       return new Promise<void>((resolve) => {
-        // deno-lint-ignore no-explicit-any
-        ws!.on("message", async (data: any) => {
+        ws!.onmessage = async (event: MessageEvent) => {
           if (ac.signal.aborted) return;
           try {
-            const msg = JSON.parse(data.toString());
+            const msg = JSON.parse(event.data);
             const msgType = msg.message_type ?? "";
 
             if (msgType === "session_started") {
@@ -446,12 +475,12 @@ async function transcribe() {
           } catch (e) {
             debug(`Message parse error: ${e}`);
           }
-        });
-        ws!.on("close", () => resolve());
-        ws!.on("error", (e: Error) => {
-          if (!ac.signal.aborted) debug(`WebSocket error: ${e.message}`);
+        };
+        ws!.onclose = () => resolve();
+        ws!.onerror = () => {
+          if (!ac.signal.aborted) debug("WebSocket error");
           resolve();
-        });
+        };
         // Also resolve on abort
         ac.signal.addEventListener("abort", () => resolve());
       });
