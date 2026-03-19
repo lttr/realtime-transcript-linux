@@ -30,7 +30,7 @@ const CONTEXT_PROMPT = [
   "TypeScript", "JavaScript", "Tailwind", "Vite",
   "pnpm", "npm", "npx", "Node.js", "ESLint", "Prettier",
   "Docker", "GitHub", "Git",
-  "Linux", "GNOME", "Ubuntu", "PipeWire", "PulseAudio",
+  "Linux", "Cosmic", "Pop!_OS", "PipeWire", "PulseAudio",
   "PostgreSQL", "Prisma", "Redis",
   "refactor", "deploy", "localhost", "webhook",
 ].join(" ");
@@ -40,11 +40,6 @@ const AUDIO_EVENT_FULL_RE = /\s*\(\s*\w+\s*\)/g;
 const AUDIO_EVENT_OPEN_RE = /\s*\(\s*$/;
 const AUDIO_EVENT_CLOSE_RE = /^\s*\w+\s*\)/;
 const JUST_ENTER_RE = /(.*)just\s+enter[.\s]*$/i;
-
-const TERMINALS = [
-  "gnome-terminal", "kitty", "alacritty", "konsole", "xterm",
-  "tilix", "terminator", "urxvt", "st", "foot", "wezterm",
-];
 
 // --- Logging ---
 
@@ -158,16 +153,16 @@ function spawnIndicator(): Deno.ChildProcess | null {
   try { Deno.writeTextFileSync(LEVEL_FILE, "0\n"); } catch { /* ignore */ }
 
   const scriptDir = new URL(".", import.meta.url).pathname;
-  const gjsScript = scriptDir + "visual_indicator_gtk.js";
+  const pyScript = scriptDir + "visual_indicator.py";
 
-  if (!fileExistsSync(gjsScript)) {
-    info("GJS indicator script not found, continuing without visual indicator");
+  if (!fileExistsSync(pyScript)) {
+    info("Indicator script not found, continuing without visual indicator");
     return null;
   }
 
   try {
-    const proc = new Deno.Command("/usr/bin/gjs", {
-      args: [gjsScript],
+    const proc = new Deno.Command("/usr/bin/python3", {
+      args: [pyScript],
       stdin: "null", stdout: "null", stderr: "null",
     }).spawn();
     return proc;
@@ -205,20 +200,6 @@ function stopIndicator(proc: Deno.ChildProcess | null) {
 
 // --- Text injection ---
 
-async function detectTerminal(): Promise<boolean> {
-  try {
-    const windowId = new TextDecoder().decode(
-      (await new Deno.Command("xdotool", { args: ["getactivewindow"], stdout: "piped", stderr: "null" }).output()).stdout
-    ).trim();
-    const wmClass = new TextDecoder().decode(
-      (await new Deno.Command("xprop", { args: ["-id", windowId, "WM_CLASS"], stdout: "piped", stderr: "null" }).output()).stdout
-    ).toLowerCase();
-    return TERMINALS.some((t) => wmClass.includes(t));
-  } catch {
-    return false;
-  }
-}
-
 async function injectText(text: string): Promise<boolean> {
   if (!text.trim()) return false;
 
@@ -239,7 +220,7 @@ async function injectText(text: string): Promise<boolean> {
     const preceding = enterMatch[1].trim();
     const toInject = preceding ? `${preceding} (enter)` : "(enter)";
     await clipboardInject(toInject);
-    await new Deno.Command("xdotool", { args: ["key", "Return"], stdout: "null", stderr: "null" }).output();
+    await new Deno.Command("wtype", { args: ["-k", "Return"], stdout: "null", stderr: "null" }).output();
   } else {
     await clipboardInject(cleaned);
   }
@@ -248,23 +229,23 @@ async function injectText(text: string): Promise<boolean> {
 }
 
 async function clipboardInject(text: string) {
-  // Copy to clipboard via xsel
-  const xsel = new Deno.Command("xsel", {
-    args: ["--clipboard", "--input"],
+  // Copy to clipboard via wl-copy
+  const wlCopy = new Deno.Command("wl-copy", {
     stdin: "piped", stdout: "null", stderr: "null",
   }).spawn();
-  const writer = xsel.stdin.getWriter();
+  const writer = wlCopy.stdin.getWriter();
   await writer.write(new TextEncoder().encode(text));
   await writer.close();
-  await xsel.status;
+  await wlCopy.status;
 
   // Brief delay for clipboard
   await new Promise((r) => setTimeout(r, 50));
 
-  // Detect terminal for correct paste shortcut
-  const isTerminal = await detectTerminal();
-  const pasteKey = isTerminal ? "ctrl+shift+v" : "ctrl+v";
-  await new Deno.Command("xdotool", { args: ["key", pasteKey], stdout: "null", stderr: "null" }).output();
+  // Paste with Ctrl+Shift+V (works in both terminals and GUI apps on Wayland)
+  await new Deno.Command("wtype", {
+    args: ["-M", "ctrl", "-M", "shift", "-P", "v", "-m", "shift", "-m", "ctrl"],
+    stdout: "null", stderr: "null",
+  }).output();
 }
 
 // --- Language ---
@@ -283,6 +264,15 @@ async function getLanguage(): Promise<string | null> {
 // --- Main transcription ---
 
 async function transcribe() {
+  // Check Wayland tools are available
+  for (const tool of ["wl-copy", "wtype"]) {
+    if (!(await findCommand(tool))) {
+      error(`Required tool '${tool}' not found. Install wl-clipboard and wtype.`);
+      notify(`Missing ${tool} - install wl-clipboard and wtype`, "critical");
+      return;
+    }
+  }
+
   if (!(await acquireLock())) return;
 
   const ac = new AbortController();
@@ -340,17 +330,20 @@ async function transcribe() {
     // Spawn visual indicator
     indicatorProc = spawnIndicator();
 
-    // Find recorder command
+    // Find recorder command (prefer pw-record > parecord > arecord)
+    const pwRecordPath = await findCommand("pw-record");
     const parecordPath = await findCommand("parecord");
     const arecordPath = await findCommand("arecord");
 
     let recorderCmd: string[];
-    if (parecordPath) {
+    if (pwRecordPath) {
+      recorderCmd = [pwRecordPath, "--format=s16", `--rate=${SAMPLE_RATE}`, "--channels=1", "-"];
+    } else if (parecordPath) {
       recorderCmd = [parecordPath, "--raw", "--rate", String(SAMPLE_RATE), "--channels", "1", "--format=s16le", "--latency-msec=50"];
     } else if (arecordPath) {
       recorderCmd = [arecordPath, "-q", "-f", "S16_LE", "-r", String(SAMPLE_RATE), "-c", "1", "-t", "raw"];
     } else {
-      throw new Error("No audio recorder found. Install pulseaudio-utils or alsa-utils.");
+      throw new Error("No audio recorder found. Install pipewire or pulseaudio-utils or alsa-utils.");
     }
 
     // Spawn recorder
