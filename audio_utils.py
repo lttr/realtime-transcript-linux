@@ -271,19 +271,28 @@ class NotificationHelper:
     def show_notification(message, urgency="normal", expire_time=None):
         """Show desktop notification if notify-send is available"""
         import subprocess
-        
+
         try:
             if expire_time is None:
                 expire_time = "800" if urgency == "low" else "1500"
-            
+
+            # Pick icon based on urgency for proper error/warning look
+            icon_map = {
+                "critical": "dialog-error",
+                "normal": "audio-input-microphone",
+                "low": "audio-input-microphone",
+            }
+            icon = icon_map.get(urgency, "audio-input-microphone")
+
             subprocess.run([
-                'notify-send', 
+                'notify-send',
                 '--app-name', 'Voice Transcription',
+                '--icon', icon,
                 '--urgency', urgency,
                 '--expire-time', str(expire_time),
                 '--hint', 'int:transient:1',
                 '--hint', 'string:desktop-entry:voice-transcription',
-                'Voice Transcription', 
+                'Voice Transcription',
                 message
             ], check=False)
         except Exception:
