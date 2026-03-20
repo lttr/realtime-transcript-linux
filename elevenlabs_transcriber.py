@@ -313,24 +313,53 @@ class ElevenLabsTranscriber:
         silence_timeout = 5.0
         max_duration = 300  # 5 minutes
 
-        # Build WebSocket URL
+        # Get single-use token (more reliable than xi-api-key header)
+        try:
+            self.logger.info("Requesting single-use token...")
+            token_resp = requests.post(
+                f"{self.base_url}/single-use-token/realtime_scribe",
+                headers={"xi-api-key": self.api_key},
+                timeout=5.0,
+            )
+            if token_resp.status_code != 200:
+                self.logger.error(f"Failed to get single-use token: HTTP {token_resp.status_code}")
+                return ""
+            token = token_resp.json().get("token")
+            if not token:
+                self.logger.error("Empty token in response")
+                return ""
+            self.logger.info("Single-use token obtained")
+        except Exception as e:
+            self.logger.error(f"Failed to get single-use token: {e}")
+            return ""
+
+        # Build WebSocket URL with token auth (no headers needed)
         params = [
             f"model_id={self.model_id}",
             "commit_strategy=vad",
             "vad_silence_threshold_secs=1.5",
             f"audio_format=pcm_{self.sample_rate}",
+            f"token={token}",
         ]
         if language is not None:
             params.append(f"language_code={language}")
         ws_url = f"wss://api.elevenlabs.io/v1/speech-to-text/realtime?{'&'.join(params)}"
 
         try:
-            self.logger.info(f"Connecting to ElevenLabs Scribe v2 Realtime WebSocket...")
-            ws = ws_connect(
-                ws_url,
-                additional_headers={"xi-api-key": self.api_key},
-            )
+            self.logger.info("Connecting to ElevenLabs Scribe v2 Realtime WebSocket...")
+            ws = ws_connect(ws_url)
             self.logger.info("WebSocket connected")
+
+            # Wait for session_started to confirm auth
+            first_msg = ws.recv(timeout=5)
+            parsed = json.loads(first_msg)
+            if parsed.get("message_type") == "session_started":
+                self.logger.info(f"ElevenLabs session started: {parsed.get('session_id')}")
+            elif "error" in parsed.get("message_type", ""):
+                error_text = parsed.get("error", parsed.get("message_type"))
+                self.logger.error(f"ElevenLabs WebSocket error: {error_text}")
+                ws.close()
+                return ""
         except Exception as e:
             self.logger.error(f"WebSocket connection failed: {e}")
             return ""
@@ -402,7 +431,7 @@ class ElevenLabsTranscriber:
                     msg_type = msg.get("message_type", "")
 
                     if msg_type == "session_started":
-                        self.logger.info(f"ElevenLabs session started: {msg.get('session_id')}")
+                        pass  # Already handled during connection
 
                     elif msg_type == "partial_transcript":
                         text = msg.get("text", "").strip()

@@ -245,7 +245,15 @@ class VoiceTranscriber:
                 print(f"✅ Transcription complete ({elapsed:.1f}s): '{final_text}'")
                 return True
             else:
-                self.logger.info(f"Transcription session ended with no speech detected ({elapsed:.1f}s)")
+                if elapsed < 2.0:
+                    # Very short session likely means connection/auth failure
+                    self.logger.warning(f"Transcription session failed quickly ({elapsed:.1f}s) - possible API error")
+                    self.notification.show_notification(
+                        f"Transcription failed - check API connection",
+                        urgency="critical"
+                    )
+                else:
+                    self.logger.info(f"Transcription session ended with no speech detected ({elapsed:.1f}s)")
                 print("No speech detected")
                 return False
         
