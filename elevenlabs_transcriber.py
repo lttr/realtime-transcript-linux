@@ -337,7 +337,7 @@ class ElevenLabsTranscriber:
         params = [
             f"model_id={self.model_id}",
             "commit_strategy=vad",
-            "vad_silence_threshold_secs=1.5",
+            "vad_silence_threshold_secs=0.7",
             f"audio_format=pcm_{self.sample_rate}",
             f"token={token}",
         ]
@@ -381,6 +381,8 @@ class ElevenLabsTranscriber:
         def send_audio():
             first_chunk = True
             context_prompt = self._get_context_prompt()
+            force_commit_interval = 10.0
+            last_force_commit = time.time()
             try:
                 while not self.stop_streaming.is_set():
                     data = self.recorder_process.stdout.read(self.chunk_bytes)
@@ -396,16 +398,27 @@ class ElevenLabsTranscriber:
                         except Exception:
                             pass
 
+                    # Force commit if no VAD commit received in a while
+                    now = time.time()
+                    should_commit = (
+                        (now - last_committed_time) > force_commit_interval and
+                        (now - last_force_commit) > force_commit_interval
+                    )
+
                     # Build message
                     msg = {
                         "message_type": "input_audio_chunk",
                         "audio_base_64": base64.b64encode(data).decode("ascii"),
-                        "commit": False,
+                        "commit": should_commit,
                         "sample_rate": self.sample_rate,
                     }
                     if first_chunk and context_prompt:
                         msg["previous_text"] = context_prompt
                         first_chunk = False
+
+                    if should_commit:
+                        last_force_commit = now
+                        self.logger.debug("Force commit (no VAD commit in 10s)")
 
                     try:
                         ws.send(json.dumps(msg))
