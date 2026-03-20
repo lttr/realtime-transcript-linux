@@ -13,7 +13,7 @@ import requests
 import numpy as np
 from typing import Optional, Union
 from pathlib import Path
-from audio_utils import AudioCapture
+from audio_utils import AudioCapture, find_recorder
 
 # Try to import dotenv, but don't fail if not available
 try:
@@ -65,14 +65,8 @@ class ElevenLabsTranscriber:
             self.logger.warning("No ElevenLabs API key found. Create .env file or set ELEVENLABS_API_KEY environment variable.")
 
     def _find_recorder(self):
-        """Find available audio recorder command (parecord or arecord)"""
-        if shutil.which('parecord'):
-            return ['parecord', '--raw', '--rate', str(self.sample_rate),
-                    '--channels', '1', '--format=s16le', '--latency-msec=50']
-        if shutil.which('arecord'):
-            return ['arecord', '-q', '-f', 'S16_LE', '-r', str(self.sample_rate),
-                    '-c', '1', '-t', 'raw']
-        return None
+        """Find available audio recorder command"""
+        return find_recorder(self.sample_rate)
 
     def _load_api_key(self) -> Optional[str]:
         """Load API key from .env file, then environment variable"""

@@ -4,7 +4,7 @@ import sys
 import os
 import logging
 import time
-from audio_utils import AudioCapture, NotificationHelper, TextInjector
+from audio_utils import AudioCapture, NotificationHelper, TextInjector, is_wayland
 from elevenlabs_transcriber import ElevenLabsTranscriber
 from assemblyai_transcriber import AssemblyAITranscriber
 from visual_indicator import AudioIndicator
@@ -317,6 +317,8 @@ class VoiceTranscriber:
     
     def print_status(self):
         """Print current system status"""
+        display_server = "Wayland" if is_wayland() else "X11"
+        print(f"Display: {display_server}")
         print("Engine Status:")
         status = self.get_engine_status()
 
@@ -374,7 +376,10 @@ def main():
 
     # Check for --xdotool flag
     if '--xdotool' in args:
-        use_xdotool = True
+        if is_wayland():
+            print("Warning: --xdotool not supported on Wayland, using clipboard injection")
+        else:
+            use_xdotool = True
         args.remove('--xdotool')
 
     if len(args) < 1:

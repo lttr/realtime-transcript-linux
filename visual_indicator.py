@@ -18,6 +18,20 @@ class AudioIndicator:
         self.last_write = 0
         self.write_interval = 0.05  # Write at most every 50ms
 
+        # Detect gtk-layer-shell availability for Wayland
+        self._has_layer_shell = False
+        from audio_utils import is_wayland
+        if is_wayland():
+            try:
+                subprocess.run(
+                    ['/usr/bin/python3', '-c',
+                     'import gi; gi.require_version("GtkLayerShell", "0.1")'],
+                    capture_output=True, timeout=3
+                )
+                self._has_layer_shell = True
+            except (subprocess.TimeoutExpired, Exception):
+                pass
+
     def show(self):
         """Show the indicator (starts subprocess)."""
         if self.process is not None:
@@ -31,7 +45,12 @@ class AudioIndicator:
             pass
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        gtk_script = os.path.join(script_dir, 'visual_indicator_gtk.py')
+
+        # Pick GTK script: Wayland layer-shell variant or X11 fallback
+        if self._has_layer_shell:
+            gtk_script = os.path.join(script_dir, 'visual_indicator_wayland.py')
+        else:
+            gtk_script = os.path.join(script_dir, 'visual_indicator_gtk.py')
 
         self.process = subprocess.Popen(
             ['/usr/bin/python3', gtk_script],

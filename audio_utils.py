@@ -7,6 +7,27 @@ import logging
 import time
 import shutil
 
+
+def is_wayland() -> bool:
+    """Detect if running under a Wayland session."""
+    return bool(os.environ.get('WAYLAND_DISPLAY') or
+                os.environ.get('XDG_SESSION_TYPE') == 'wayland')
+
+
+def find_recorder(sample_rate=16000, channels=1):
+    """Find available audio recorder command. Priority: pw-record > parecord > arecord."""
+    if shutil.which('pw-record'):
+        return ['pw-record', '--raw', f'--format=s16', f'--rate={sample_rate}',
+                f'--channels={channels}', '-']
+    if shutil.which('parecord'):
+        return ['parecord', '--raw', '--rate', str(sample_rate),
+                '--channels', str(channels), '--format=s16le', '--latency-msec=50']
+    if shutil.which('arecord'):
+        return ['arecord', '-q', '-f', 'S16_LE', '-r', str(sample_rate),
+                '-c', str(channels), '-t', 'raw']
+    return None
+
+
 class AudioCapture:
     """Shared audio capture utilities using parecord (PulseAudio) - no PyAudio dependency"""
 
@@ -29,16 +50,11 @@ class AudioCapture:
         self._recorder_cmd = self._find_recorder()
 
     def _find_recorder(self):
-        """Find available audio recorder command (parecord or arecord)"""
-        # Prefer parecord (PulseAudio/PipeWire) - works on modern GNOME
-        if shutil.which('parecord'):
-            return ['parecord', '--raw', '--rate', str(self.sample_rate),
-                    '--channels', str(self.channels), '--format=s16le', '--latency-msec=50']
-        # Fallback to arecord (ALSA)
-        if shutil.which('arecord'):
-            return ['arecord', '-q', '-f', 'S16_LE', '-r', str(self.sample_rate),
-                    '-c', str(self.channels), '-t', 'raw']
-        raise RuntimeError("No audio recorder found. Install pulseaudio-utils or alsa-utils.")
+        """Find available audio recorder command"""
+        cmd = find_recorder(self.sample_rate, self.channels)
+        if not cmd:
+            raise RuntimeError("No audio recorder found. Install pipewire, pulseaudio-utils, or alsa-utils.")
+        return cmd
 
     def capture_streaming_audio(self, max_duration=180, callback=None, stop_flag=None, volume_callback=None):
         """
@@ -280,6 +296,25 @@ class TextInjector:
     def __init__(self, use_xdotool=False):
         self.logger = logging.getLogger(__name__)
         self.use_xdotool = use_xdotool  # False = clipboard (default), True = xdotool type
+        self._wayland = is_wayland()
+
+        # Verify required tools at startup
+        if self._wayland:
+            missing = []
+            if not shutil.which('wl-copy'):
+                missing.append('wl-copy (wl-clipboard)')
+            if not shutil.which('wtype'):
+                missing.append('wtype')
+            if missing:
+                self.logger.warning(f"Wayland tools missing: {', '.join(missing)}")
+        else:
+            missing = []
+            if not shutil.which('xdotool'):
+                missing.append('xdotool')
+            if not shutil.which('xsel'):
+                missing.append('xsel')
+            if missing:
+                self.logger.warning(f"X11 tools missing: {', '.join(missing)}")
 
         # Only very short filler words - conservative list
         self.filler_words = {'uh', 'um', 'er', 'ah', 'eh', 'uhm', 'hmm', 'hm', 'mm'}
@@ -304,17 +339,27 @@ class TextInjector:
         return result.strip()
 
     def _do_inject(self, text):
-        """Perform the actual text injection using clipboard or xdotool"""
+        """Perform the actual text injection using clipboard + paste"""
         import subprocess
 
-        if self.use_xdotool:
-            # Direct keystroke simulation
+        if self._wayland:
+            # Wayland: wl-copy + wtype Ctrl+Shift+V
+            proc = subprocess.Popen(['wl-copy'], stdin=subprocess.PIPE, text=True)
+            proc.communicate(input=text)
+            if proc.returncode != 0:
+                raise subprocess.CalledProcessError(proc.returncode, 'wl-copy')
+
+            time.sleep(0.05)
+
+            # Always Ctrl+Shift+V on Wayland (works in both terminals and apps)
+            subprocess.run(['wtype', '-M', 'ctrl', '-M', 'shift', '-k', 'v',
+                           '-m', 'shift', '-m', 'ctrl'], check=True)
+        elif self.use_xdotool:
+            # X11: Direct keystroke simulation
             subprocess.run(['xdotool', 'type', '--delay', '0', text], check=True)
         else:
-            # Clipboard-based injection: copy to clipboard, then paste
-            # Use xsel to set clipboard content
-            result = subprocess.run(['which', 'xsel'], capture_output=True, text=True)
-            if result.returncode != 0:
+            # X11: Clipboard-based injection via xsel + xdotool paste
+            if not shutil.which('xsel'):
                 self.logger.error("xsel not installed (required for clipboard mode)")
                 raise subprocess.CalledProcessError(1, 'xsel')
 
@@ -370,15 +415,22 @@ class TextInjector:
             if has_trailing_space and not cleaned_text.endswith(' '):
                 cleaned_text += ' '
 
-            method = "xdotool" if self.use_xdotool else "clipboard"
-            self.logger.info(f"Starting text injection ({method}): '{cleaned_text[:30]}{'...' if len(cleaned_text) > 30 else ''}'")
+            if self._wayland:
+                # Wayland tool check
+                if not shutil.which('wl-copy') or not shutil.which('wtype'):
+                    self.logger.error("wl-copy/wtype not installed (required for Wayland)")
+                    return False
+                if self.use_xdotool:
+                    self.logger.warning("--xdotool not supported on Wayland, using clipboard")
+                method = "wayland-clipboard"
+            else:
+                # X11 tool check
+                if not shutil.which('xdotool'):
+                    self.logger.error("xdotool not installed")
+                    return False
+                method = "xdotool" if self.use_xdotool else "clipboard"
 
-            # Check if xdotool is available (needed for both methods)
-            result = subprocess.run(['which', 'xdotool'],
-                                  capture_output=True, text=True)
-            if result.returncode != 0:
-                self.logger.error("xdotool not installed")
-                return False
+            self.logger.info(f"Starting text injection ({method}): '{cleaned_text[:30]}{'...' if len(cleaned_text) > 30 else ''}'")
 
             # Small delay for focus stability
             time.sleep(0.1)
@@ -389,7 +441,10 @@ class TextInjector:
                 preceding_text = just_enter_match.group(1).strip()
                 text_to_inject = (preceding_text + " (enter)") if preceding_text else "(enter)"
                 self._do_inject(text_to_inject)
-                subprocess.run(['xdotool', 'key', 'Return'], check=True)
+                if self._wayland:
+                    subprocess.run(['wtype', '-k', 'Return'], check=True)
+                else:
+                    subprocess.run(['xdotool', 'key', 'Return'], check=True)
             else:
                 self._do_inject(cleaned_text)
 

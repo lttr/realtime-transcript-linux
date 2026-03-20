@@ -22,8 +22,14 @@ A real-time voice transcription system for Linux that transcribes speech and aut
 
 ### 1. System Dependencies
 
+**X11 (GNOME):**
 ```bash
 sudo apt install python3 python3-pip python3-dev portaudio19-dev xdotool xsel libnotify-bin
+```
+
+**Wayland (Cosmic DE):**
+```bash
+sudo apt install python3 python3-pip python3-dev portaudio19-dev wl-clipboard wtype libnotify-bin gir1.2-gtklayershell-0.1
 ```
 
 ### 2. Project Setup
@@ -87,7 +93,7 @@ tail -f /tmp/voice_transcription.log
 rm /tmp/voice_transcription.pid
 ```
 
-- **Text not injecting**: Check `xdotool` is installed, target window is focused. Wayland has limited support.
+- **Text not injecting**: X11: check `xdotool`/`xsel` installed. Wayland: check `wl-copy`/`wtype` installed. Ensure target window is focused.
 - **Poor quality**: Check microphone, reduce background noise, try the other engine.
 
 ## Security

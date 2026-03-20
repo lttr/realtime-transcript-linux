@@ -9,6 +9,7 @@ import subprocess
 import shutil
 from typing import Optional, Callable, Type
 from pathlib import Path
+from audio_utils import find_recorder
 
 # Try to import dotenv, but don't fail if not available
 try:
@@ -67,16 +68,8 @@ class AssemblyAITranscriber:
             self.logger.warning("No AssemblyAI API key found. Create .env file or set ASSEMBLYAI_API_KEY environment variable.")
 
     def _find_recorder(self):
-        """Find available audio recorder command (parecord or arecord)"""
-        # Prefer parecord (PulseAudio/PipeWire) - works on modern GNOME
-        if shutil.which('parecord'):
-            return ['parecord', '--raw', '--rate', str(self.sample_rate),
-                    '--channels', '1', '--format=s16le', '--latency-msec=50']
-        # Fallback to arecord (ALSA)
-        if shutil.which('arecord'):
-            return ['arecord', '-q', '-f', 'S16_LE', '-r', str(self.sample_rate),
-                    '-c', '1', '-t', 'raw']
-        return None
+        """Find available audio recorder command"""
+        return find_recorder(self.sample_rate)
 
     def _load_api_key(self) -> Optional[str]:
         """Load API key from .env file, then environment variable"""
