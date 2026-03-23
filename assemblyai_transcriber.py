@@ -6,8 +6,7 @@ import logging
 import numpy as np
 import threading
 import subprocess
-import shutil
-from typing import Optional, Callable, Type
+from typing import Optional, Type
 from pathlib import Path
 from audio_utils import find_recorder
 
@@ -399,17 +398,6 @@ class AssemblyAITranscriber:
                 except:
                     pass
             return self.full_text.strip()
-
-    def transcribe_audio(self, audio_data, language: str = "en") -> Optional[str]:
-        """
-        Transcribe audio (not implemented for streaming-only API)
-        AssemblyAI streaming API requires real-time audio input
-
-        This method exists for compatibility but is not used
-        """
-        self.logger.warning("AssemblyAI transcriber only supports streaming mode")
-        return None
-
 
 class AssemblyAIError(Exception):
     """Custom exception for AssemblyAI API errors"""

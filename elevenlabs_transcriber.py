@@ -11,9 +11,9 @@ import subprocess
 import threading
 import requests
 import numpy as np
-from typing import Optional, Union
+from typing import Optional
 from pathlib import Path
-from audio_utils import AudioCapture, find_recorder
+from audio_utils import find_recorder
 
 # Try to import dotenv, but don't fail if not available
 try:
@@ -39,7 +39,6 @@ class ElevenLabsTranscriber:
         self.api_key = api_key or self._load_api_key()
         self.base_url = "https://api.elevenlabs.io/v1"
         self.model_id = "scribe_v2_realtime"
-        self.batch_model_id = "scribe_v1"
         self.skip_availability_check = skip_availability_check
 
         # Audio settings (match AssemblyAI)
@@ -48,11 +47,8 @@ class ElevenLabsTranscriber:
         self.bytes_per_sample = 2  # 16-bit audio
         self.chunk_bytes = self.chunk_size * self.bytes_per_sample
 
-        # Timeout and retry settings (for HTTP fallback)
+        # Timeout for availability check
         self.quick_test_timeout = 5.0
-        self.api_timeout = 8.0
-        self.max_retries = 2
-        self.retry_delay = 1.0
 
         # Streaming state
         self.recorder_process = None
@@ -163,123 +159,6 @@ class ElevenLabsTranscriber:
             "refactor", "deploy", "localhost", "webhook",
         ]
         return " ".join(terms)
-
-    def transcribe_audio(self, audio_data: Union[np.ndarray, bytes], language: str = "en") -> Optional[str]:
-        """
-        Transcribe audio using ElevenLabs HTTP API (single-shot, scribe_v1)
-
-        Args:
-            audio_data: Audio as numpy array or WAV bytes
-            language: Language code (default: en)
-
-        Returns:
-            Transcribed text or None if failed
-        """
-        if not self.api_key:
-            self.logger.error("No API key available")
-            return None
-
-        # Convert audio to WAV bytes if needed
-        if isinstance(audio_data, np.ndarray):
-            audio_capture = AudioCapture()
-            wav_data = audio_capture.frames_to_wav_bytes(audio_data)
-            if not wav_data:
-                self.logger.error("Failed to convert audio to WAV format")
-                return None
-        else:
-            wav_data = audio_data
-
-        # Skip very small audio files (less than 0.5s)
-        if len(wav_data) < 16000:
-            audio_size_kb = len(wav_data) / 1024
-            self.logger.info(f"Audio too short for transcription ({audio_size_kb:.1f}KB < ~16KB minimum)")
-            return ""
-
-        return self._transcribe_with_retry(wav_data, language)
-
-    def _transcribe_with_retry(self, wav_data: bytes, language: str) -> Optional[str]:
-        """Transcribe with retry logic and error handling (HTTP API)"""
-
-        for attempt in range(self.max_retries + 1):
-            try:
-                start_time = time.time()
-                audio_size_kb = len(wav_data) / 1024
-                self.logger.info(f"Sending {audio_size_kb:.1f}KB audio to ElevenLabs API (attempt {attempt + 1})")
-
-                files = {
-                    'file': ('audio.wav', wav_data, 'audio/wav')
-                }
-
-                data = {
-                    'model_id': self.batch_model_id,
-                    'tag_audio_events': False
-                }
-
-                if language is not None:
-                    data['language_code'] = language
-
-                headers = {
-                    'xi-api-key': self.api_key
-                }
-
-                response = requests.post(
-                    f"{self.base_url}/speech-to-text",
-                    files=files,
-                    data=data,
-                    headers=headers,
-                    timeout=self.api_timeout
-                )
-
-                elapsed = time.time() - start_time
-
-                if response.status_code == 200:
-                    result = response.json()
-                    text = result.get('text', '').strip()
-                    self.logger.info(f"ElevenLabs API response received ({elapsed:.1f}s): '{text[:50]}{'...' if len(text) > 50 else ''}'")
-                    return text
-
-                elif response.status_code == 429:
-                    self.logger.warning(f"ElevenLabs API rate limited after {elapsed:.1f}s (attempt {attempt + 1})")
-                    if attempt < self.max_retries:
-                        time.sleep(self.retry_delay * (attempt + 1))
-                        continue
-                    return None
-
-                elif response.status_code == 401:
-                    self.logger.error(f"ElevenLabs API authentication failed after {elapsed:.1f}s - check API key")
-                    return None
-
-                elif response.status_code >= 500:
-                    self.logger.warning(f"ElevenLabs API server error {response.status_code} after {elapsed:.1f}s (attempt {attempt + 1})")
-                    if attempt < self.max_retries:
-                        time.sleep(self.retry_delay)
-                        continue
-                    return None
-
-                else:
-                    self.logger.error(f"ElevenLabs API error {response.status_code} after {elapsed:.1f}s: {response.text}")
-                    return None
-
-            except requests.exceptions.Timeout:
-                self.logger.warning(f"ElevenLabs API timeout ({self.api_timeout}s) on attempt {attempt + 1}")
-                if attempt < self.max_retries:
-                    time.sleep(self.retry_delay)
-                    continue
-                return None
-
-            except requests.exceptions.ConnectionError:
-                self.logger.warning(f"ElevenLabs API connection error on attempt {attempt + 1}")
-                if attempt < self.max_retries:
-                    time.sleep(self.retry_delay)
-                    continue
-                return None
-
-            except Exception as e:
-                self.logger.error(f"Unexpected error during transcription: {e}")
-                return None
-
-        self.logger.error("All retry attempts failed")
-        return None
 
     def transcribe_streaming(self, audio_capture, text_callback=None, stop_flag=None, language: str = "en", volume_callback=None) -> str:
         """
@@ -570,27 +449,6 @@ class ElevenLabsTranscriber:
 
         self.logger.info(f"ElevenLabs session ended, total text: '{full_text.strip()[:80]}'")
         return full_text.strip()
-
-    def get_usage_info(self) -> Optional[dict]:
-        """Get API usage information (optional, for monitoring)"""
-        if not self.api_key:
-            return None
-
-        try:
-            response = requests.get(
-                f"{self.base_url}/user",
-                headers={"xi-api-key": self.api_key},
-                timeout=5.0
-            )
-
-            if response.status_code == 200:
-                return response.json()
-
-        except Exception as e:
-            self.logger.debug(f"Failed to get usage info: {e}")
-
-        return None
-
 
 class ElevenLabsError(Exception):
     """Custom exception for ElevenLabs API errors"""

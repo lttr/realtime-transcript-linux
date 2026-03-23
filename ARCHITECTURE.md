@@ -127,11 +127,6 @@ graph LR
 ### No PyAudio
 Uses `pw-record` (PipeWire, current), `parecord` (PulseAudio), or `arecord` (ALSA) via subprocess. Avoids PyAudio's device enumeration complexity and build issues. More reliable with modern PipeWire stacks.
 
-### Dual-threshold VAD (AudioCapture utility)
-AudioCapture in `audio_utils.py` has two silence thresholds (used for non-streaming workflows, not by the main engines):
-- **1.5s** = phrase boundary (transcribe accumulated audio, keep recording)
-- **5.0s** = end of session (user stopped talking)
-
 ### Dual-signal silence detection (ElevenLabs)
 Session end requires two independent signals to both show inactivity:
 - **Server commits** - no ElevenLabs VAD commit for 5s

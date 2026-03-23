@@ -4,7 +4,7 @@ import sys
 import os
 import logging
 import time
-from audio_utils import AudioCapture, NotificationHelper, TextInjector, is_wayland
+from audio_utils import NotificationHelper, TextInjector, is_wayland
 from elevenlabs_transcriber import ElevenLabsTranscriber
 from assemblyai_transcriber import AssemblyAITranscriber
 from visual_indicator import AudioIndicator

@@ -1,79 +1,100 @@
 #!/home/lukas/code/realtime-transcript-linux/venv/bin/python
 
-import sys
 import subprocess
+import shutil
+from audio_utils import is_wayland
+
 
 def test_system_dependencies():
-    print("=== Testing System Dependencies ===")
-    
-    # Test xdotool
-    try:
-        result = subprocess.run(['which', 'xdotool'], capture_output=True, text=True)
-        if result.returncode == 0:
-            print("✓ xdotool: FOUND")
-        else:
-            print("✗ xdotool: NOT FOUND - Install with: sudo apt install xdotool")
-    except Exception as e:
-        print(f"✗ xdotool: ERROR - {e}")
-    
-    # Test notify-send (optional)
-    try:
-        result = subprocess.run(['which', 'notify-send'], capture_output=True, text=True)
-        if result.returncode == 0:
-            print("✓ notify-send: FOUND")
-        else:
-            print("? notify-send: NOT FOUND (optional) - Install with: sudo apt install libnotify-bin")
-    except Exception as e:
-        print(f"? notify-send: ERROR - {e}")
+    print("=== System Dependencies ===")
+
+    # Audio recorder
+    for cmd in ['pw-record', 'parecord', 'arecord']:
+        if shutil.which(cmd):
+            print(f"✓ {cmd}: FOUND")
+            break
+    else:
+        print("✗ No audio recorder found - install pipewire or pulseaudio-utils")
+
+    # Display server tools
+    if is_wayland():
+        print(f"  Display: Wayland")
+        for cmd, pkg in [('wl-copy', 'wl-clipboard'), ('wtype', 'wtype')]:
+            if shutil.which(cmd):
+                print(f"✓ {cmd}: FOUND")
+            else:
+                print(f"✗ {cmd}: NOT FOUND - install {pkg}")
+    else:
+        print(f"  Display: X11")
+        for cmd in ['xdotool', 'xsel']:
+            if shutil.which(cmd):
+                print(f"✓ {cmd}: FOUND")
+            else:
+                print(f"✗ {cmd}: NOT FOUND - sudo apt install {cmd}")
+
+    # Notifications (optional)
+    if shutil.which('notify-send'):
+        print("✓ notify-send: FOUND")
+    else:
+        print("? notify-send: NOT FOUND (optional)")
+
 
 def test_python_dependencies():
-    print("\n=== Testing Python Dependencies ===")
-    
-    # Test RealtimeSTT
-    try:
-        import RealtimeSTT
-        print("✓ RealtimeSTT: IMPORTED")
-    except ImportError:
-        print("✗ RealtimeSTT: NOT FOUND - Run: pip install -r requirements.txt")
-        return False
-    
-    return True
+    print("\n=== Python Dependencies ===")
+    ok = True
 
-def test_basic_functionality():
-    print("\n=== Testing Basic Audio Setup ===")
-    
+    deps = [
+        ('numpy', 'numpy'),
+        ('requests', 'requests'),
+        ('dotenv', 'python-dotenv'),
+        ('websockets', 'websockets'),
+        ('assemblyai', 'assemblyai'),
+    ]
+
+    for module, package in deps:
+        try:
+            __import__(module)
+            print(f"✓ {package}: OK")
+        except ImportError:
+            print(f"✗ {package}: NOT FOUND")
+            ok = False
+
+    return ok
+
+
+def test_api_keys():
+    print("\n=== API Keys ===")
+    import os
+    from pathlib import Path
+
     try:
-        # Test pyaudio import
-        import pyaudio
-        print("✓ PyAudio: WORKING")
-        
-        # Test numpy import  
-        import numpy
-        print("✓ NumPy: WORKING")
-        
-        return True
-        
-    except Exception as e:
-        print(f"✗ Basic functionality: ERROR - {e}")
-        return False
+        from dotenv import load_dotenv
+        load_dotenv(Path(__file__).parent / '.env')
+    except ImportError:
+        pass
+
+    for key_name in ['ASSEMBLYAI_API_KEY', 'ELEVENLABS_API_KEY']:
+        val = os.getenv(key_name)
+        if val:
+            print(f"✓ {key_name}: configured ({val[:8]}...)")
+        else:
+            print(f"? {key_name}: not set")
+
 
 def main():
-    print("Voice Transcription System - Setup Test")
+    print("Voice Transcription - Setup Test")
     print("=" * 50)
-    
+
     test_system_dependencies()
     deps_ok = test_python_dependencies()
-    basic_ok = test_basic_functionality()
-    
+    test_api_keys()
+
     print("\n=== Summary ===")
-    if deps_ok and basic_ok:
-        print("✓ Basic setup looks good!")
-        print("Next steps:")
-        print("1. Configure API key: cp .env.example .env && edit .env")
-        print("2. Test the system: ./voice_transcription.py status")
-        print("3. Test transcription: ./voice_transcription.py")
+    if deps_ok:
+        print("✓ Setup looks good!")
     else:
-        print("✗ Some issues found. Please resolve them before proceeding.")
+        print("✗ Missing dependencies. Run: pip install -r requirements.txt")
+
 
 if __name__ == "__main__":
     main()
