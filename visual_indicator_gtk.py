@@ -1,7 +1,8 @@
 #!/usr/bin/python3
-"""Visual audio level indicator GTK subprocess.
+"""Visual audio level indicator GTK subprocess (X11 support).
 
 Reads volume levels from a temp file and displays them in a floating overlay.
+Used on X11/GNOME. Wayland uses visual_indicator_wayland.py instead.
 """
 
 import gi

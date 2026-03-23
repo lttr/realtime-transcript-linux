@@ -79,6 +79,7 @@ class TextInjector:
             if missing:
                 self.logger.warning(f"Wayland tools missing: {', '.join(missing)}")
         else:
+            # X11 support: xdotool + xsel required for text injection
             missing = []
             if not shutil.which('xdotool'):
                 missing.append('xdotool')
@@ -126,10 +127,10 @@ class TextInjector:
             subprocess.run(['wtype', '-M', 'ctrl', '-M', 'shift', '-k', 'v',
                            '-m', 'shift', '-m', 'ctrl'], check=True)
         elif self.use_xdotool:
-            # X11: Direct keystroke simulation
+            # X11 support: direct keystroke simulation
             subprocess.run(['xdotool', 'type', '--delay', '0', text], check=True)
         else:
-            # X11: Clipboard-based injection via xsel + xdotool paste
+            # X11 support: clipboard-based injection via xsel + xdotool paste
             if not shutil.which('xsel'):
                 self.logger.error("xsel not installed (required for clipboard mode)")
                 raise subprocess.CalledProcessError(1, 'xsel')
@@ -195,7 +196,7 @@ class TextInjector:
                     self.logger.warning("--xdotool not supported on Wayland, using clipboard")
                 method = "wayland-clipboard"
             else:
-                # X11 tool check
+                # X11 support: tool check
                 if not shutil.which('xdotool'):
                     self.logger.error("xdotool not installed")
                     return False
@@ -215,7 +216,7 @@ class TextInjector:
                 if self._wayland:
                     subprocess.run(['wtype', '-k', 'Return'], check=True)
                 else:
-                    subprocess.run(['xdotool', 'key', 'Return'], check=True)
+                    subprocess.run(['xdotool', 'key', 'Return'], check=True)  # X11 support
             else:
                 self._do_inject(cleaned_text)
 

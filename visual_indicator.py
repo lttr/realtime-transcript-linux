@@ -46,11 +46,11 @@ class AudioIndicator:
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
 
-        # Pick GTK script: Wayland layer-shell variant or X11 fallback
+        # Pick GTK script: Wayland layer-shell or X11 fallback
         if self._has_layer_shell:
             gtk_script = os.path.join(script_dir, 'visual_indicator_wayland.py')
         else:
-            gtk_script = os.path.join(script_dir, 'visual_indicator_gtk.py')
+            gtk_script = os.path.join(script_dir, 'visual_indicator_gtk.py')  # X11 support
 
         self.process = subprocess.Popen(
             ['/usr/bin/python3', gtk_script],

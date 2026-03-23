@@ -382,7 +382,7 @@ def main():
             # Remove engine args from the list
             args = args[:engine_idx] + args[engine_idx + 2:]
 
-    # Check for --xdotool flag
+    # X11 support: --xdotool flag for direct keystroke injection
     if '--xdotool' in args:
         if is_wayland():
             print("Warning: --xdotool not supported on Wayland, using clipboard injection")

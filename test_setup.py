@@ -25,6 +25,7 @@ def test_system_dependencies():
             else:
                 print(f"✗ {cmd}: NOT FOUND - install {pkg}")
     else:
+        # X11 support
         print(f"  Display: X11")
         for cmd in ['xdotool', 'xsel']:
             if shutil.which(cmd):
