@@ -6,6 +6,7 @@ Uses a temp file for fast IPC with the GTK subprocess.
 
 import subprocess
 import os
+import tempfile
 
 
 class AudioIndicator:
@@ -16,6 +17,20 @@ class AudioIndicator:
         self.level_file = "/tmp/voice_indicator_level"
         self.last_write = 0
         self.write_interval = 0.05  # Write at most every 50ms
+
+        # Detect gtk-layer-shell availability for Wayland
+        self._has_layer_shell = False
+        from audio_utils import is_wayland
+        if is_wayland():
+            try:
+                subprocess.run(
+                    ['/usr/bin/python3', '-c',
+                     'import gi; gi.require_version("GtkLayerShell", "0.1")'],
+                    capture_output=True, timeout=3
+                )
+                self._has_layer_shell = True
+            except (subprocess.TimeoutExpired, Exception):
+                pass
 
     def show(self):
         """Show the indicator (starts subprocess)."""
@@ -31,8 +46,11 @@ class AudioIndicator:
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
 
-        # Use Wayland layer-shell indicator (X11 variant removed)
-        gtk_script = os.path.join(script_dir, 'visual_indicator_wayland.py')
+        # Pick GTK script: Wayland layer-shell variant or X11 fallback
+        if self._has_layer_shell:
+            gtk_script = os.path.join(script_dir, 'visual_indicator_wayland.py')
+        else:
+            gtk_script = os.path.join(script_dir, 'visual_indicator_gtk.py')
 
         self.process = subprocess.Popen(
             ['/usr/bin/python3', gtk_script],

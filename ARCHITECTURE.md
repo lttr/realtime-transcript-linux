@@ -111,7 +111,7 @@ sequenceDiagram
 
 The visual indicator is a small GTK3 floating overlay showing 4 animated bars in the bottom-right corner. It runs as a separate process to avoid blocking the transcription pipeline. The main process writes volume levels to a temp file; the GTK process polls it every 50ms. Writing "stop" to the file triggers a brief animation before exit.
 
-Uses `gtk-layer-shell` for Wayland overlay positioning (`visual_indicator_wayland.py`).
+On Wayland/Cosmic DE, uses `gtk-layer-shell` for proper overlay positioning (`visual_indicator_wayland.py`). On X11, uses standard GTK window hints (`visual_indicator_gtk.py`).
 
 ```mermaid
 graph LR

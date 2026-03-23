@@ -20,7 +20,8 @@ Real-time voice transcription for Linux (GNOME + Cosmic DE). Captures speech via
 | `assemblyai_transcriber.py` | WebSocket streaming via SDK, own audio capture, event-driven |
 | `elevenlabs_transcriber.py` | WebSocket streaming (Scribe v2 Realtime), own audio capture, server VAD + local audio activity tracking |
 | `audio_utils.py` | `is_wayland()`, `find_recorder()`, TextInjector, NotificationHelper |
-| `visual_indicator.py` | Wrapper - spawns GTK subprocess, IPC via temp file |
+| `visual_indicator.py` | Wrapper - spawns GTK subprocess (Wayland or X11), IPC via temp file |
+| `visual_indicator_gtk.py` | GTK3 floating overlay, audio level bars (X11) |
 | `visual_indicator_wayland.py` | GTK3 + gtk-layer-shell overlay (Wayland/Cosmic DE) |
 
 ## Runtime Files
