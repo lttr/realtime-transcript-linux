@@ -41,7 +41,7 @@ ElevenLabs launched a realtime WebSocket STT API using model `scribe_v2_realtime
 ### VAD parameters (server-side)
 
 - `commit_strategy=vad` - enable server VAD
-- `vad_silence_threshold_secs=1.5` - silence before commit (default 1.5)
+- `vad_silence_threshold_secs=0.7` - silence before commit (tuned down from default 1.5)
 - `vad_threshold=0.4` - voice detection sensitivity
 - `min_speech_duration_ms=100`
 - `min_silence_duration_ms=100`

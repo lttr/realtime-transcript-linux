@@ -2,27 +2,34 @@
 
 ## System Overview
 
-The system is triggered by a GNOME keyboard shortcut which launches the main orchestrator. After acquiring an instance lock, it selects a transcription engine and spawns a visual indicator. Both engines produce text callbacks that feed into the TextInjector, which pastes results into the active window.
+The system is triggered by a keyboard shortcut (Cosmic DE) which launches the main orchestrator. After acquiring an instance lock, it selects a transcription engine and spawns a visual indicator. Both engines produce text callbacks that feed into the TextInjector, which pastes results into the active window.
+
+**Current setup:** Cosmic DE (Wayland), ElevenLabs engine, PipeWire audio via `pw-record`, text injection via `wl-copy` + `wtype`.
 
 ```mermaid
 graph TD
-    KS[GNOME Keyboard Shortcut] --> VT[voice_transcription.py]
+    KS[Keyboard Shortcut] --> VT[voice_transcription.py]
     VT --> LOCK[Instance Lock]
     VT --> ENGINE{Engine Selection}
-    ENGINE -->|default| AAI[assemblyai_transcriber.py]
-    ENGINE -->|alternative| EL[elevenlabs_transcriber.py]
+    ENGINE -.->|available| AAI[assemblyai_transcriber.py]
+    ENGINE ==>|primary| EL[elevenlabs_transcriber.py]
 
-    AAI --> MIC1[parecord / arecord]
-    EL --> MIC2[parecord / arecord]
+    AAI -.-> MIC1[pw-record]
+    EL ==> MIC2[pw-record / PipeWire]
 
-    AAI -->|streaming events| CB[text callback]
-    EL -->|committed transcripts| CB
-    CB --> TI[TextInjector]
-    TI --> WIN[Active Window]
+    AAI -.->|streaming events| CB[text callback]
+    EL ==>|committed transcripts| CB
+    CB ==> TI[TextInjector / wl-copy + wtype]
+    TI ==> WIN[Active Window]
 
-    VT --> VI[visual_indicator.py]
-    VI -->|subprocess| GTK[visual_indicator_gtk.py]
+    VT ==> VI[visual_indicator.py]
+    VI ==>|subprocess| GTK[visual_indicator_wayland.py]
     VI -.->|temp file IPC| GTK
+
+    style EL fill:#2d5016,stroke:#4a8c2a,color:#fff
+    style MIC2 fill:#2d5016,stroke:#4a8c2a,color:#fff
+    style TI fill:#2d5016,stroke:#4a8c2a,color:#fff
+    style GTK fill:#2d5016,stroke:#4a8c2a,color:#fff
 ```
 
 ## Engine Comparison
@@ -31,17 +38,19 @@ Both engines use WebSocket streaming with server-side speech detection. Assembly
 
 ```mermaid
 graph LR
-    subgraph AAI[AssemblyAI - Default]
+    subgraph AAI[AssemblyAI - available]
         A1[Direct mic subprocess] --> A2[WebSocket streaming]
         A2 --> A3[Server detects end_of_turn]
         A3 --> A4[Inject phrase]
     end
 
-    subgraph EL[ElevenLabs - Alternative]
-        E1[Direct mic subprocess] --> E2[WebSocket streaming]
-        E2 --> E3[Server VAD commits transcript]
-        E3 --> E4[Inject phrase]
+    subgraph EL[ElevenLabs - PRIMARY]
+        E1[pw-record / PipeWire] ==> E2[WebSocket streaming]
+        E2 ==> E3[Server VAD commits transcript]
+        E3 ==> E4[Inject phrase]
     end
+
+    style EL fill:#2d5016,stroke:#4a8c2a,color:#fff
 ```
 
 | Aspect | AssemblyAI | ElevenLabs |
@@ -49,45 +58,60 @@ graph LR
 | Protocol | WebSocket (SDK) | WebSocket (direct) |
 | Model | Streaming v3 | Scribe v2 Realtime |
 | Audio handling | Own subprocess + threads | Own subprocess + threads |
-| Phrase detection | Server-side turn events | Server-side VAD (1.5s silence) |
+| Phrase detection | Server-side turn events | Server-side VAD (0.7s silence) |
+| Session end | Server TerminationEvent | Dual-signal: no commits AND no mic audio for 5s |
 | Vocabulary priming | `keyterms_prompt` (list) | `previous_text` (context string) |
 | Latency | ~150ms partials | ~150ms partials |
 
 ## Audio Pipeline
 
-Audio is captured from the system microphone as raw 16kHz 16-bit mono frames. The VAD monitors volume levels continuously. When silence exceeds 1.5s, the accumulated audio is sent for transcription and the result is injected - but recording continues. Only after 5s of silence does the session end.
+Audio is captured from the system microphone as raw 16kHz 16-bit mono frames via `pw-record`/`parecord`/`arecord`. Each engine handles VAD differently:
+
+### AssemblyAI (server-side VAD)
+Audio streams continuously to the server. AssemblyAI's server detects turn boundaries and emits `TurnEvent`s with finalized text. No client-side VAD or audio accumulation.
 
 ```mermaid
 sequenceDiagram
-    participant Mic as parecord
-    participant VAD as VAD
-    participant API as Cloud API
-    participant Inj as TextInjector
+    participant Mic as pw-record
+    participant API as AssemblyAI WebSocket
     participant Win as Active Window
 
-    Mic->>VAD: Raw audio frames
-    loop Every frame
-        VAD->>VAD: Calculate RMS volume
-        alt Volume above threshold
-            VAD->>VAD: Reset silence counter
-        else Silence
-            VAD->>VAD: Increment silence counter
-        end
-    end
+    Mic->>API: Stream all audio chunks continuously
+    API->>API: Server-side turn detection
+    API-->>Win: TurnEvent → inject transcribed text
+    Note over API: Session ends on TerminationEvent
+```
 
-    alt 1.5s silence - phrase boundary
-        VAD->>API: Send accumulated audio
-        API-->>Inj: Transcribed text
-        Inj->>Win: Paste into active window
-        Note over VAD: Continue recording
-    else 5.0s silence - end session
-        VAD->>VAD: Stop capture
+### ElevenLabs (server VAD + local audio activity)
+Audio streams continuously to the server. ElevenLabs server VAD commits transcript at phrase boundaries (0.7s silence). The local monitor tracks two signals for session end: server commit timestamps AND mic audio activity (RMS volume). Session ends only when BOTH signals show 5s of inactivity, preventing premature stops when user pauses between sentences.
+
+```mermaid
+sequenceDiagram
+    participant Mic as pw-record
+    participant Send as Send Thread
+    participant WS as ElevenLabs WebSocket
+    participant Mon as Monitor Thread
+    participant Win as Active Window
+
+    Mic->>Send: Raw audio frames
+    Send->>Send: Track audio activity (RMS > 50)
+    Send->>WS: Stream base64 audio chunks
+    WS-->>Win: Inject committed transcript
+    WS-->>Mon: Update last_committed_time
+
+    loop Every 0.5s
+        Mon->>Mon: Check both signals
+        alt No commits AND no mic audio > 5s
+            Mon->>Mon: End session
+        end
     end
 ```
 
 ## Visual Indicator
 
 The visual indicator is a small GTK3 floating overlay showing 4 animated bars in the bottom-right corner. It runs as a separate process to avoid blocking the transcription pipeline. The main process writes volume levels to a temp file; the GTK process polls it every 50ms. Writing "stop" to the file triggers a brief animation before exit.
+
+On Wayland/Cosmic DE, uses `gtk-layer-shell` for proper overlay positioning (`visual_indicator_wayland.py`). On X11, uses standard GTK window hints (`visual_indicator_gtk.py`).
 
 ```mermaid
 graph LR
@@ -101,20 +125,28 @@ graph LR
 ## Design Decisions
 
 ### No PyAudio
-Uses `parecord` (PulseAudio) or `arecord` (ALSA) via subprocess. Avoids PyAudio's device enumeration complexity and build issues. More reliable with modern PipeWire/GNOME stacks.
+Uses `pw-record` (PipeWire, current), `parecord` (PulseAudio), or `arecord` (ALSA) via subprocess. Avoids PyAudio's device enumeration complexity and build issues. More reliable with modern PipeWire stacks.
 
-### Dual-threshold VAD
-Two silence thresholds serve different purposes:
+### Dual-threshold VAD (AudioCapture utility)
+AudioCapture in `audio_utils.py` has two silence thresholds (used for non-streaming workflows, not by the main engines):
 - **1.5s** = phrase boundary (transcribe accumulated audio, keep recording)
 - **5.0s** = end of session (user stopped talking)
 
-This enables progressive injection without premature session termination.
+### Dual-signal silence detection (ElevenLabs)
+Session end requires two independent signals to both show inactivity:
+- **Server commits** - no ElevenLabs VAD commit for 5s
+- **Mic audio activity** - no audio above RMS threshold (50) for 5s
+
+This prevents premature stops when the server hasn't committed yet but the user is still speaking (e.g., pausing between sentences).
 
 ### Subprocess Visual Indicator
 GTK runs in a separate process because the GTK main loop would block transcription. Temp file IPC is simple and sufficient at 50ms polling. Clean lifecycle: kill subprocess = cleanup.
 
-### Clipboard over xdotool type
-Default injection uses clipboard (`xsel`) + paste keystroke because `xdotool type` has issues with non-ASCII characters (Czech diacritics). Terminal detection switches paste key: `Ctrl+V` vs `Ctrl+Shift+V`.
+### Clipboard-based text injection
+- **Wayland (current):** `wl-copy` + `wtype` keystroke
+- **X11:** `xsel` + `xdotool` keystroke
+
+Clipboard approach preferred over direct typing because `xdotool type` has issues with non-ASCII characters (Czech diacritics). Terminal detection switches paste key: `Ctrl+V` vs `Ctrl+Shift+V`.
 
 ### Instance Locking
 PID-based lock file prevents overlapping sessions. Checks if PID is still alive before acquiring, auto-cleans stale locks from crashed sessions.

@@ -18,7 +18,7 @@ Real-time voice transcription for Linux (GNOME + Cosmic DE). Captures speech via
 |------|------|
 | `voice_transcription.py` | Orchestrator, CLI, instance locking, engine selection |
 | `assemblyai_transcriber.py` | WebSocket streaming via SDK, own audio capture, event-driven |
-| `elevenlabs_transcriber.py` | WebSocket streaming (Scribe v2 Realtime), own audio capture, server VAD |
+| `elevenlabs_transcriber.py` | WebSocket streaming (Scribe v2 Realtime), own audio capture, server VAD + local audio activity tracking |
 | `audio_utils.py` | `is_wayland()`, `find_recorder()`, AudioCapture, TextInjector, NotificationHelper |
 | `visual_indicator.py` | Wrapper - spawns GTK subprocess (Wayland or X11), IPC via temp file |
 | `visual_indicator_gtk.py` | GTK3 floating overlay, audio level bars (X11) |
@@ -53,3 +53,11 @@ tail -f /tmp/voice_transcription.log        # View logs
 - Long pause: 5.0s (end recording)
 - Min phrase: 2.0s (skip tiny fragments)
 - Max duration: 180s
+
+## VAD Tuning (elevenlabs_transcriber.py)
+
+- Silence threshold: 50 (RMS volume, local mic activity detection)
+- Silence timeout: 5.0s (requires BOTH no server commits AND no mic audio)
+- Server VAD silence threshold: 0.7s (ElevenLabs server-side)
+- Force commit interval: 10.0s (client-side fallback if server VAD stalls)
+- Max duration: 300s
