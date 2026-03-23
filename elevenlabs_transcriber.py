@@ -310,6 +310,8 @@ class ElevenLabsTranscriber:
         full_text = ""
         self.stop_streaming = threading.Event()
         last_committed_time = time.time()
+        last_audio_activity_time = time.time()
+        silence_threshold = 50  # RMS volume threshold for speech detection
         silence_timeout = 5.0
         max_duration = 300  # 5 minutes
 
@@ -379,6 +381,7 @@ class ElevenLabsTranscriber:
 
         # --- Send thread: read PCM from parecord, base64-encode, send ---
         def send_audio():
+            nonlocal last_audio_activity_time
             first_chunk = True
             context_prompt = self._get_context_prompt()
             force_commit_interval = 10.0
@@ -389,14 +392,16 @@ class ElevenLabsTranscriber:
                     if not data or len(data) < self.chunk_bytes:
                         break
 
-                    # Calculate volume for visual indicator
-                    if volume_callback:
-                        try:
-                            audio_array = np.frombuffer(data, dtype=np.int16)
-                            volume = np.sqrt(np.mean(audio_array.astype(np.float32) ** 2))
+                    # Calculate volume for visual indicator + speech detection
+                    try:
+                        audio_array = np.frombuffer(data, dtype=np.int16)
+                        volume = np.sqrt(np.mean(audio_array.astype(np.float32) ** 2))
+                        if volume > silence_threshold:
+                            last_audio_activity_time = time.time()
+                        if volume_callback:
                             volume_callback(volume)
-                        except Exception:
-                            pass
+                    except Exception:
+                        pass
 
                     # Force commit if no VAD commit received in a while
                     now = time.time()
@@ -490,10 +495,14 @@ class ElevenLabsTranscriber:
                     self.logger.info("Maximum duration reached, stopping...")
                     break
 
-                # Silence timeout (only if we have text already)
-                silence_duration = time.time() - last_committed_time
-                if silence_duration > silence_timeout and full_text.strip():
-                    self.logger.info(f"Silence detected for {silence_duration:.1f}s, stopping...")
+                # Silence timeout: stop only when BOTH no server commits AND no
+                # mic audio activity for silence_timeout seconds (fixes premature
+                # stop when user pauses between sentences but keeps speaking)
+                now = time.time()
+                since_commit = now - last_committed_time
+                since_audio = now - last_audio_activity_time
+                if since_commit > silence_timeout and since_audio > silence_timeout and full_text.strip():
+                    self.logger.info(f"Silence detected for {since_audio:.1f}s (no audio) / {since_commit:.1f}s (no commit), stopping...")
                     break
 
                 # Stop flag (in-memory)
