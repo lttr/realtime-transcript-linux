@@ -18,7 +18,7 @@ LEVEL_FILE = "/tmp/voice_indicator_level"
 class AudioIndicatorWindow(Gtk.Window):
     """Floating GTK overlay showing real-time audio levels."""
 
-    def __init__(self, num_bars: int = 4, width: int = 48, height: int = 24):
+    def __init__(self, num_bars: int = 4, width: int = 72, height: int = 40):
         super().__init__(type=Gtk.WindowType.POPUP)
 
         self.num_bars = num_bars
@@ -49,11 +49,11 @@ class AudioIndicatorWindow(Gtk.Window):
             self.set_visual(visual)
         self.set_app_paintable(True)
 
-        # Position bottom-right
+        # Position bottom-center
         display = Gdk.Display.get_default()
         monitor = display.get_primary_monitor()
         geometry = monitor.get_geometry()
-        x = geometry.x + geometry.width - width - 20
+        x = geometry.x + (geometry.width - width) // 2
         y = geometry.y + geometry.height - height - 60
         self.move(x, y)
 
@@ -173,7 +173,7 @@ class AudioIndicatorWindow(Gtk.Window):
         bar_gap = 3
         total_bars_width = self.num_bars * bar_width + (self.num_bars - 1) * bar_gap
         padding = (width - total_bars_width) / 2
-        max_bar_height = height - 8
+        max_bar_height = height - 20
 
         # How many bars to hide from left (countdown during silence)
         bars_to_hide = getattr(self, 'bars_to_hide', 0)
@@ -185,7 +185,7 @@ class AudioIndicatorWindow(Gtk.Window):
 
             x = padding + i * (bar_width + bar_gap)
             bar_height = max(2, level * max_bar_height)
-            y = height - 4 - bar_height
+            y = height - 10 - bar_height
 
             # White with opacity based on level
             opacity = 0.4 + level * 0.5

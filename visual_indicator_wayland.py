@@ -19,7 +19,7 @@ SILENCE_THRESHOLD = 0.12
 BAR_MAX_HEIGHT = 22
 
 CSS = b"""
-window { background-color: rgba(30,30,30,0.9); border-radius: 6px; padding: 6px 8px; }
+window { background-color: rgba(30,30,30,0.9); border-radius: 8px; }
 window.hidden { background-color: transparent; }
 .bar { background-color: rgba(255,255,255,0.6); border-radius: 1px; min-width: 4px; transition: all 100ms ease; }
 .bar.hidden { background-color: transparent; min-height: 0; }
@@ -47,10 +47,10 @@ class Indicator:
         self.win = Gtk.Window()
         GtkLayerShell.init_for_window(self.win)
         GtkLayerShell.set_layer(self.win, GtkLayerShell.Layer.OVERLAY)
+        # Bottom-center: anchor to BOTTOM only; leaving LEFT/RIGHT unanchored
+        # makes the compositor center the surface horizontally.
         GtkLayerShell.set_anchor(self.win, GtkLayerShell.Edge.BOTTOM, True)
-        GtkLayerShell.set_anchor(self.win, GtkLayerShell.Edge.RIGHT, True)
         GtkLayerShell.set_margin(self.win, GtkLayerShell.Edge.BOTTOM, 20)
-        GtkLayerShell.set_margin(self.win, GtkLayerShell.Edge.RIGHT, 20)
         GtkLayerShell.set_keyboard_mode(self.win, GtkLayerShell.KeyboardMode.NONE)
         self.win.set_decorated(False)
         self.win.set_accept_focus(False)
@@ -60,7 +60,11 @@ class Indicator:
         self.box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         self.box.set_valign(Gtk.Align.END)
         self.box.set_halign(Gtk.Align.CENTER)
-        self.box.set_margin_bottom(4)
+        # GTK3 ignores CSS `padding` on the toplevel layer-shell window (it
+        # shrinks to hug the bars), so pad via widget margins instead — the
+        # window auto-sizes to box+margins and the background fills it.
+        for edge in ("top", "bottom", "start", "end"):
+            getattr(self.box, f"set_margin_{edge}")(12)
 
         self.bar_widgets = []
         for _ in range(NUM_BARS):
