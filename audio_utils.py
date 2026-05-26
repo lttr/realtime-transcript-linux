@@ -100,7 +100,18 @@ class TextInjector:
         
         # Remove filler words (case insensitive)
         result = re.sub(pattern, '', text, flags=re.IGNORECASE)
-        
+
+        # Strip ASR disfluency artifacts from slow/hesitant speech. The model
+        # punctuates pauses with an ellipsis ("...", "…") and cut-off words with
+        # a trailing dash. These can appear anywhere in a commit, not just the
+        # ends ("That is actually... Yeah"), so replace ellipses globally with a
+        # space. (ElevenLabs no_verbatim=true is requested but the realtime model
+        # currently ignores it, so this client-side pass is the real fix; it also
+        # covers the AssemblyAI engine.)
+        result = re.sub(r'\s*(?:\.{2,}|…)\s*', ' ', result)  # ellipsis anywhere -> space
+        result = re.sub(r'\s*[-–—]+\s*$', '', result)        # trailing dash (cut-off word)
+        result = re.sub(r'^\s*[-–—]+\s*', '', result)        # leading dash (e.g. orphan from "Mm-hmm")
+
         # Clean up extra spaces and punctuation issues
         result = re.sub(r'\s+', ' ', result)  # Multiple spaces to single space
         result = re.sub(r'\s*,\s*,\s*', ', ', result)  # Double commas

@@ -218,7 +218,14 @@ class ElevenLabsTranscriber:
         params = [
             f"model_id={self.model_id}",
             "commit_strategy=vad",
-            "vad_silence_threshold_secs=0.7",
+            # Modest raise from 0.7 (API default is 1.5): slow speech with short
+            # pauses no longer fragments into many "trailing-off" turns, each of
+            # which the model would otherwise punctuate with an ellipsis.
+            "vad_silence_threshold_secs=1.0",
+            # Strip filler words ("um"/"uh") and disfluencies/false-starts
+            # server-side. This is what removes the spurious "..." and "-"
+            # artifacts the model emits for hesitant/cut-off slow speech.
+            "no_verbatim=true",
             f"audio_format=pcm_{self.sample_rate}",
             f"token={token}",
         ]

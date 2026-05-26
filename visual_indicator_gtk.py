@@ -105,11 +105,12 @@ class AudioIndicatorWindow(Gtk.Window):
 
         # Track silence duration
         if new_level is not None and new_level > self.silence_threshold:
-            # Sound detected - only reset if we haven't fully counted down
-            if self.bars_to_hide < self.num_bars:
-                self.silence_start = None
-                self.bars_to_hide = 0
-                self.all_bars_hidden_time = None
+            # Sound detected - always reset. Previously guarded by
+            # `bars_to_hide < num_bars`, which left the overlay permanently
+            # hidden once fully faded out, even when the user resumed talking.
+            self.silence_start = None
+            self.bars_to_hide = 0
+            self.all_bars_hidden_time = None
         else:
             # Silence - start or continue tracking
             if self.silence_start is None:

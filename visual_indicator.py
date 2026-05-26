@@ -52,11 +52,21 @@ class AudioIndicator:
         else:
             gtk_script = os.path.join(script_dir, 'visual_indicator_gtk.py')  # X11 support
 
+        # Route subprocess stderr to a log file rather than DEVNULL so indicator
+        # crashes (e.g. missing WAYLAND_DISPLAY/DBUS in a stripped shortcut env,
+        # GTK/layer-shell init failures) are diagnosable instead of silent.
+        try:
+            err_log = open("/tmp/voice_indicator.log", "a")
+            err_log.write(f"\n--- indicator start: {gtk_script} (layer_shell={self._has_layer_shell}) ---\n")
+            err_log.flush()
+        except Exception:
+            err_log = subprocess.DEVNULL
+
         self.process = subprocess.Popen(
             ['/usr/bin/python3', gtk_script],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
+            stderr=err_log
         )
 
     def update_level(self, volume: float):

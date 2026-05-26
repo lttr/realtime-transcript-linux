@@ -131,10 +131,13 @@ class Indicator:
 
         # Track silence
         if new_level is not None and new_level > SILENCE_THRESHOLD:
-            if self.bars_to_hide < NUM_BARS:
-                self.silence_start = None
-                self.bars_to_hide = 0
-                self.all_bars_hidden_time = None
+            # Always reset on speech. Previously guarded by `bars_to_hide <
+            # NUM_BARS`, which meant that once fully faded out (after ~5s of
+            # silence) the overlay never reappeared when the user resumed
+            # talking, even though transcription continued.
+            self.silence_start = None
+            self.bars_to_hide = 0
+            self.all_bars_hidden_time = None
         else:
             if self.silence_start is None:
                 self.silence_start = now
