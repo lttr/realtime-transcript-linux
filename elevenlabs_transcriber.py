@@ -190,7 +190,9 @@ class ElevenLabsTranscriber:
         self.stop_streaming = threading.Event()
         last_committed_time = time.time()
         last_audio_activity_time = time.time()
-        silence_threshold = 50  # RMS volume threshold for speech detection
+        silence_threshold = 30  # RMS volume threshold for speech detection
+                                 # (matches visual indicator's 0.12*250=30, so
+                                 # session silence and overlay fade-out agree)
         silence_timeout = 5.0
         max_duration = 300  # 5 minutes
 
@@ -369,7 +371,6 @@ class ElevenLabsTranscriber:
         # Mirrors AssemblyAI pattern: monitor owns the lifecycle,
         # terminates recorder and closes WS to unblock other threads.
         def monitor():
-            nonlocal last_committed_time
             start_time = time.time()
             stop_file = "/tmp/voice_transcription_stop.flag"
 
@@ -381,14 +382,16 @@ class ElevenLabsTranscriber:
                     self.logger.info("Maximum duration reached, stopping...")
                     break
 
-                # Silence timeout: stop only when BOTH no server commits AND no
-                # mic audio activity for silence_timeout seconds (fixes premature
-                # stop when user pauses between sentences but keeps speaking)
+                # Silence timeout: stop after silence_timeout seconds of mic
+                # silence. Uses the same silence threshold as the visual
+                # indicator, so the session ends at the moment the overlay fully
+                # fades out - giving the user a clear "it's done, start a new
+                # one" signal instead of lingering ~1.5s longer waiting on the
+                # trailing VAD commit.
                 now = time.time()
-                since_commit = now - last_committed_time
                 since_audio = now - last_audio_activity_time
-                if since_commit > silence_timeout and since_audio > silence_timeout and full_text.strip():
-                    self.logger.info(f"Silence detected for {since_audio:.1f}s (no audio) / {since_commit:.1f}s (no commit), stopping...")
+                if since_audio > silence_timeout and full_text.strip():
+                    self.logger.info(f"Silence detected for {since_audio:.1f}s, stopping...")
                     break
 
                 # Stop flag (in-memory)

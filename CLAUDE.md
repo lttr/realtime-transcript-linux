@@ -48,8 +48,8 @@ tail -f /tmp/voice_transcription.log        # View logs
 
 ## VAD Tuning (elevenlabs_transcriber.py)
 
-- Silence threshold: 50 (RMS volume, local mic activity detection)
-- Silence timeout: 5.0s (requires BOTH no server commits AND no mic audio)
+- Silence threshold: 30 (RMS volume, local mic activity detection; matches the visual indicator's `0.12*250=30` so session silence and overlay fade agree)
+- Silence timeout: 5.0s of mic silence (audio-only; chosen to coincide with the indicator's ~5s full fade-out so the session ends exactly when the overlay disappears, freeing up for the next session)
 - Server VAD silence threshold: 1.0s (ElevenLabs server-side; API default is 1.5s. Lower values fragment slow speech into "trailing-off" turns the model punctuates with ellipses)
 - `no_verbatim=true`: requested in the WS URL to remove filler words + disfluencies server-side, but the `scribe_v2_realtime` model currently IGNORES it (committed text still contains "uh"/"..."). The real fix is client-side: `_clean_filler_words` in `audio_utils.py` strips filler words, ellipses (anywhere - the model punctuates pauses with `...`), and orphan leading/trailing dashes (cut-off words). Also covers the AssemblyAI engine.
 - Force commit interval: 10.0s (client-side fallback if server VAD stalls)
