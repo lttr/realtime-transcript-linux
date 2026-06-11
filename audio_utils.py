@@ -118,7 +118,16 @@ class TextInjector:
         result = re.sub(r'^[,\s]+', '', result)  # Leading comma/space
         result = re.sub(r'[,\s]+$', '', result)  # Trailing comma/space
         result = re.sub(r'\s+([,.!?;:])', r'\1', result)  # Remove space before punctuation
-        
+
+        # Safety net for ElevenLabs auto-detect drift: the user speaks ONLY
+        # Czech/English (Latin script), so any Cyrillic is a mis-detection to
+        # Russian/Ukrainian. Drop the whole turn rather than inject wrong-script
+        # gibberish. (Polish drift is Latin and can't be caught here - it's
+        # filtered upstream by the per-turn language_code guard in the
+        # transcriber. This backstop also covers the AssemblyAI engine.)
+        if re.search(r'[Ѐ-ӿԀ-ԯ]', result):
+            return ''
+
         return result.strip()
 
     def _do_inject(self, text):

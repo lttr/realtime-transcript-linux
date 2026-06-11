@@ -54,3 +54,12 @@ tail -f /tmp/voice_transcription.log        # View logs
 - `no_verbatim=true`: requested in the WS URL to remove filler words + disfluencies server-side, but the `scribe_v2_realtime` model currently IGNORES it (committed text still contains "uh"/"..."). The real fix is client-side: `_clean_filler_words` in `audio_utils.py` strips filler words, ellipses (anywhere - the model punctuates pauses with `...`), and orphan leading/trailing dashes (cut-off words). Also covers the AssemblyAI engine.
 - Force commit interval: 10.0s (client-side fallback if server VAD stalls)
 - Max duration: 300s
+
+## Language guard (Czech/English only)
+
+The user speaks ONLY Czech or English, switching whole sentences (not mid-sentence), mostly English. The realtime API has NO candidate-language whitelist - only a single `language_code` or full auto-detect - and forcing one language would butcher the other, so we run auto-detect with a recovery guard:
+
+- WS params request `include_language_detection=true` + `include_timestamps=true` (the detected `language_code` is only surfaced on the `*_with_timestamps` committed message).
+- `ALLOWED_LANGS = {cs, ces, cze, en, eng}` (module-level in `elevenlabs_transcriber.py`). A committed turn whose detected language is outside this set is an auto-detect drift (Czech mis-read as Russian/Ukrainian Cyrillic or Polish).
+- Recovery, NOT drop: the send thread buffers raw PCM per turn (`audio_buffer` + `committed_offset` cursor advanced on every commit). A drifted turn's audio slice is re-transcribed via `_recover_as_czech` - the HTTP `POST /v1/speech-to-text` (`model_id=scribe_v2`, `language_code=cs`) endpoint, which is far less drift-prone - and that text is used instead. Adds ~1 HTTP roundtrip latency only on the rare drifted turn; turn is dropped only if recovery also fails.
+- Backstop: `_clean_filler_words` in `audio_utils.py` returns `''` on any Cyrillic (`[Ѐ-ӿԀ-ԯ]`) that slips through (e.g. a `committed_transcript` without language_code), preventing wrong-script injection. Covers both engines. Polish drift is Latin so it can't be caught here - the per-turn `language_code` guard handles it.

@@ -28,6 +28,11 @@ try:
 except ImportError:
     WEBSOCKETS_AVAILABLE = False
 
+# Languages the user actually speaks. Committed turns auto-detected as anything
+# else (ru/uk/pl drift on Czech speech) are dropped. Covers both ISO 639-1 and
+# 639-3 spellings ElevenLabs may return.
+ALLOWED_LANGS = {"cs", "ces", "cze", "en", "eng"}
+
 
 class ElevenLabsTranscriber:
     """ElevenLabs Speech-to-Text API client - WebSocket streaming + HTTP fallback"""
@@ -141,6 +146,50 @@ class ElevenLabsTranscriber:
         text = self._AUDIO_EVENT_CLOSE_RE.sub('', text)
         return text.strip()
 
+    def _recover_as_czech(self, pcm_bytes: bytes) -> str:
+        """Re-transcribe a turn's raw PCM with Czech forced.
+
+        Rescue path for turns the realtime auto-detect mis-identified as a
+        foreign (usually Slavic) language. The file-based Scribe endpoint with an
+        explicit language_code is far less drift-prone, so we wrap the buffered
+        PCM as a WAV and POST it with language_code=cs. The user speaks only
+        Czech/English and these drifts happen on Czech speech, so cs is the right
+        forced language. Returns '' on any failure - the caller then drops the
+        turn rather than blocking.
+        """
+        min_bytes = int(0.1 * self.sample_rate) * 2  # API requires >=100ms, 16-bit
+        if not pcm_bytes or len(pcm_bytes) < min_bytes:
+            return ""
+        try:
+            import io
+            import wave
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)  # 16-bit
+                wav.setframerate(self.sample_rate)
+                wav.writeframes(pcm_bytes)
+
+            t0 = time.time()
+            resp = requests.post(
+                f"{self.base_url}/speech-to-text",
+                headers={"xi-api-key": self.api_key},
+                files={"file": ("turn.wav", buf.getvalue(), "audio/wav")},
+                data={"model_id": "scribe_v2", "language_code": "cs"},
+                timeout=10.0,
+            )
+            if resp.status_code != 200:
+                self.logger.error(f"Czech recovery failed: HTTP {resp.status_code}")
+                return ""
+            text = (resp.json() or {}).get("text", "").strip()
+            self.logger.info(
+                f"Czech recovery ({(time.time() - t0) * 1000:.0f}ms): '{text[:60]}'"
+            )
+            return text
+        except Exception as e:
+            self.logger.error(f"Czech recovery error: {e}")
+            return ""
+
     def _get_context_prompt(self):
         """Tech vocabulary as context prompt for Scribe v2 Realtime.
 
@@ -190,6 +239,16 @@ class ElevenLabsTranscriber:
         self.stop_streaming = threading.Event()
         last_committed_time = time.time()
         last_audio_activity_time = time.time()
+
+        # Per-turn raw PCM buffer for foreign-language recovery. The send thread
+        # appends every chunk; on each commit we slice [committed_offset:end] to
+        # get exactly that turn's audio, then advance the cursor. If the turn was
+        # auto-detected as a non-cs/en language, that slice is re-transcribed with
+        # Czech forced instead of being lost. (committed_offset is a 1-element list
+        # so both nested threads mutate it without a nonlocal declaration.)
+        audio_buffer = bytearray()
+        audio_lock = threading.Lock()
+        committed_offset = [0]
         silence_threshold = 30  # RMS volume threshold for speech detection
                                  # (matches visual indicator's 0.12*250=30, so
                                  # session silence and overlay fade-out agree)
@@ -228,6 +287,14 @@ class ElevenLabsTranscriber:
             # server-side. This is what removes the spurious "..." and "-"
             # artifacts the model emits for hesitant/cut-off slow speech.
             "no_verbatim=true",
+            # Report the detected language per committed turn so we can drop
+            # auto-detect drifts. The user speaks ONLY Czech or English, but
+            # ElevenLabs auto-detect (language_code omitted) sometimes mis-fires
+            # to Russian/Ukrainian (Cyrillic) or Polish on Czech speech. The
+            # detected language_code is only present on the *_with_timestamps
+            # message, so include_timestamps is required to surface it.
+            "include_language_detection=true",
+            "include_timestamps=true",
             f"audio_format=pcm_{self.sample_rate}",
             f"token={token}",
         ]
@@ -279,6 +346,10 @@ class ElevenLabsTranscriber:
                     data = self.recorder_process.stdout.read(self.chunk_bytes)
                     if not data or len(data) < self.chunk_bytes:
                         break
+
+                    # Keep raw PCM so a mis-detected turn can be re-transcribed
+                    with audio_lock:
+                        audio_buffer.extend(data)
 
                     # Calculate volume for visual indicator + speech detection
                     try:
@@ -345,9 +416,39 @@ class ElevenLabsTranscriber:
                             self.logger.debug(f"Partial: '{text[:60]}'")
 
                     elif msg_type in ("committed_transcript", "committed_transcript_with_timestamps"):
-                        text = self._strip_audio_events(msg.get("text", ""))
+                        last_committed_time = time.time()
+
+                        # Advance the per-turn audio cursor for EVERY commit so the
+                        # next turn's slice starts in the right place, kept or not.
+                        with audio_lock:
+                            turn_start = committed_offset[0]
+                            turn_end = len(audio_buffer)
+                            committed_offset[0] = turn_end
+
+                        # Language guard: the user speaks ONLY Czech or English. In
+                        # auto-detect mode (language_code omitted) ElevenLabs
+                        # occasionally drifts to another (usually Slavic) language on
+                        # Czech speech, emitting Cyrillic (ru/uk) or Polish text. The
+                        # realtime API has no candidate-whitelist, so instead of
+                        # losing the turn we re-transcribe its raw audio via the HTTP
+                        # Scribe endpoint with Czech forced - far less drift-prone -
+                        # and use that text. (No-op when a language is forced: the
+                        # echoed language_code is always the forced cs/en.)
+                        detected_lang = (msg.get("language_code") or "").lower()
+                        if detected_lang and detected_lang not in ALLOWED_LANGS:
+                            with audio_lock:
+                                turn_audio = bytes(audio_buffer[turn_start:turn_end])
+                            self.logger.warning(
+                                f"Auto-detect drift to '{detected_lang}'; recovering "
+                                f"turn as Czech (was: '{msg.get('text', '')[:60]}')"
+                            )
+                            text = self._strip_audio_events(self._recover_as_czech(turn_audio))
+                            if not text:
+                                self.logger.warning("Czech recovery produced no text; turn lost")
+                        else:
+                            text = self._strip_audio_events(msg.get("text", ""))
+
                         if text:
-                            last_committed_time = time.time()
                             self.logger.info(f"Committed: '{text}'")
                             if full_text and not full_text.endswith(" "):
                                 full_text += " "
