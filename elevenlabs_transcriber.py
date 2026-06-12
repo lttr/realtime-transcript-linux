@@ -415,10 +415,19 @@ class ElevenLabsTranscriber:
                         if text:
                             self.logger.debug(f"Partial: '{text[:60]}'")
 
-                    elif msg_type in ("committed_transcript", "committed_transcript_with_timestamps"):
+                    elif msg_type == "committed_transcript":
+                        # With include_timestamps=true the server emits BOTH a plain
+                        # committed_transcript AND a committed_transcript_with_timestamps
+                        # for the same turn. Ignore the plain one: it lacks language_code
+                        # (so it can't drive the language guard) and handling both would
+                        # inject every turn twice. The *_with_timestamps message below is
+                        # the single source of truth for committed text.
                         last_committed_time = time.time()
 
-                        # Advance the per-turn audio cursor for EVERY commit so the
+                    elif msg_type == "committed_transcript_with_timestamps":
+                        last_committed_time = time.time()
+
+                        # Advance the per-turn audio cursor once per turn so the
                         # next turn's slice starts in the right place, kept or not.
                         with audio_lock:
                             turn_start = committed_offset[0]
