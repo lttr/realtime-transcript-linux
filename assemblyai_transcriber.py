@@ -4,6 +4,7 @@ import os
 import time
 import logging
 import numpy as np
+import queue
 import threading
 import subprocess
 from typing import Optional, Type
@@ -196,6 +197,19 @@ class AssemblyAITranscriber:
 
         return on_begin, on_turn, on_terminated, on_error
 
+    def _stop_recorder(self):
+        """Terminate the mic subprocess if it is still running."""
+        if not self.recorder_process:
+            return
+        try:
+            self.recorder_process.terminate()
+            self.recorder_process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            self.recorder_process.kill()
+        except Exception:
+            pass
+        self.recorder_process = None
+
     def transcribe_streaming(self, audio_capture, text_callback=None, stop_flag=None, language: str = "en", volume_callback=None) -> str:
         """
         Perform streaming transcription with progressive results
@@ -223,6 +237,56 @@ class AssemblyAITranscriber:
         self.full_text = ""
         self.last_turn_time = time.time()
         self.silence_timeout = 5.0  # Stop after 5 seconds of silence
+
+        # Check for audio recorder
+        if not self._recorder_cmd:
+            self.logger.error("No audio recorder found. Install pulseaudio-utils or alsa-utils.")
+            return ""
+
+        # --- Start capturing BEFORE the network handshake ---
+        # client.connect() plus the keyterms round-trip takes 1-3s. The overlay
+        # is already on screen, so the user starts talking straight away - and
+        # until now the mic subprocess wasn't running yet, so those first seconds
+        # were silently lost. Start the recorder first and buffer chunks in
+        # memory; audio_generator() flushes the backlog once streaming begins. A
+        # dedicated reader thread does the buffering because the 64KB stdout pipe
+        # would only hold ~2s of 16kHz mono PCM before pw-record blocks.
+        self.stop_streaming = threading.Event()
+        pending_chunks = queue.Queue()
+
+        try:
+            self.recorder_process = subprocess.Popen(
+                self._recorder_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to start audio recorder: {e}")
+            return ""
+
+        def capture_audio():
+            """Read PCM from the recorder, meter volume, queue for streaming."""
+            try:
+                while not self.stop_streaming.is_set():
+                    data = self.recorder_process.stdout.read(self.chunk_bytes)
+                    if not data or len(data) < self.chunk_bytes:
+                        break
+                    # Volume drives the visual indicator
+                    if volume_callback:
+                        try:
+                            audio_array = np.frombuffer(data, dtype=np.int16)
+                            volume = np.sqrt(np.mean(audio_array.astype(np.float32) ** 2))
+                            volume_callback(volume)
+                        except Exception:
+                            pass
+                    pending_chunks.put(data)
+            except Exception as e:
+                self.logger.debug(f"Capture thread error: {e}")
+            finally:
+                pending_chunks.put(None)  # unblock the audio generator
+
+        capture_thread = threading.Thread(target=capture_audio, daemon=True)
+        capture_thread.start()
 
         try:
             # Create streaming client
@@ -258,16 +322,7 @@ class AssemblyAITranscriber:
                 self.logger.info(f"Sending {len(keyterms)} keyterms for vocabulary boosting")
                 client.set_params(StreamingSessionParameters(keyterms_prompt=keyterms))
 
-            # Create microphone stream
-            self.logger.info("Starting microphone stream...")
-
-            # Check for audio recorder
-            if not self._recorder_cmd:
-                self.logger.error("No audio recorder found. Install pulseaudio-utils or alsa-utils.")
-                return ""
-
             # Start a timeout monitor thread to stop after silence
-            self.stop_streaming = threading.Event()
 
             def timeout_monitor():
                 """Monitor for silence timeout"""
@@ -316,30 +371,18 @@ class AssemblyAITranscriber:
             monitor_thread = threading.Thread(target=timeout_monitor, daemon=True)
             monitor_thread.start()
 
-            # Start streaming with parecord subprocess
+            # Start streaming captured audio
             try:
-                self.recorder_process = subprocess.Popen(
-                    self._recorder_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL
-                )
-
-                # Generator that reads from parecord and yields audio chunks
+                # Generator that drains the capture queue. The first iterations
+                # flush whatever was buffered during the handshake, so speech
+                # from before the connection opened still reaches the API.
                 def audio_generator():
-                    """Generator that yields audio chunks from parecord"""
+                    """Generator that yields buffered audio chunks"""
                     try:
                         while not self.stop_streaming.is_set():
-                            data = self.recorder_process.stdout.read(self.chunk_bytes)
-                            if not data or len(data) < self.chunk_bytes:
+                            data = pending_chunks.get()
+                            if data is None:  # capture thread finished
                                 break
-                            # Calculate volume and call callback for visual indicator
-                            if volume_callback:
-                                try:
-                                    audio_array = np.frombuffer(data, dtype=np.int16)
-                                    volume = np.sqrt(np.mean(audio_array.astype(np.float32) ** 2))
-                                    volume_callback(volume)
-                                except Exception:
-                                    pass
                             yield data
                     finally:
                         if self.recorder_process:
@@ -388,6 +431,7 @@ class AssemblyAITranscriber:
             self.logger.info("Streaming interrupted by user")
             if self.client:
                 self.client.disconnect(terminate=True)
+            self._stop_recorder()
             return self.full_text.strip()
 
         except Exception as e:
@@ -397,6 +441,9 @@ class AssemblyAITranscriber:
                     self.client.disconnect(terminate=True)
                 except:
                     pass
+            # The recorder now starts before the handshake, so a failure anywhere
+            # in the setup above can leave it running - always tear it down.
+            self._stop_recorder()
             return self.full_text.strip()
 
 class AssemblyAIError(Exception):

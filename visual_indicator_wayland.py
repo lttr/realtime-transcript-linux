@@ -11,11 +11,12 @@ gi.require_version("GtkLayerShell", "0.1")
 from gi.repository import Gtk, GLib, GtkLayerShell
 import time
 
+from audio_levels import rms_to_level, is_active
+
 LEVEL_FILE = "/tmp/voice_indicator_level"
 NUM_BARS = 4
 WIDTH = 64
 HEIGHT = 32
-SILENCE_THRESHOLD = 0.12
 BAR_MAX_HEIGHT = 22
 
 CSS = b"""
@@ -110,6 +111,7 @@ class Indicator:
             return True
 
         new_level = None
+        new_active = False
         try:
             with open(LEVEL_FILE, "r") as f:
                 text = f.read().strip()
@@ -121,7 +123,10 @@ class Indicator:
                 self.stop_line.show()
                 return True
             volume = float(text)
-            new_level = min(1.0, max(0.0, volume / 250))
+            new_level = rms_to_level(volume)
+            # Bar height and "is the user talking" are separate questions: quiet
+            # speech is still speech even when it draws as a near-zero bar.
+            new_active = is_active(volume)
         except (FileNotFoundError, ValueError):
             pass
 
@@ -129,12 +134,16 @@ class Indicator:
         for i in range(NUM_BARS - 1):
             self.levels[i] = self.levels[i + 1]
 
-        if new_level is not None and abs(new_level - self.last_volume) > 0.01:
+        # Always push the fresh reading. This used to be gated on the level
+        # having moved by >0.01, which froze the display whenever the level was
+        # steady - including permanently at full height once the old linear
+        # scaling clipped every speech chunk to 1.0.
+        if new_level is not None:
             self.levels[NUM_BARS - 1] = new_level
             self.last_volume = new_level
 
         # Track silence
-        if new_level is not None and new_level > SILENCE_THRESHOLD:
+        if new_active:
             # Always reset on speech. Previously guarded by `bars_to_hide <
             # NUM_BARS`, which meant that once fully faded out (after ~5s of
             # silence) the overlay never reappeared when the user resumed

@@ -121,10 +121,12 @@ if __name__ == '__main__':
     indicator = AudioIndicator()
     indicator.show()
 
+    # Sweep across the realistic int16 RMS range for speech (see audio_levels):
+    # roughly silence -> conversational -> emphatic and back.
     start = time.time()
     while time.time() - start < 5:
         t = time.time() - start
-        level = 100 + 150 * abs(math.sin(t * 3)) + 50 * math.sin(t * 7)
+        level = 1200 + 6000 * abs(math.sin(t * 1.5)) + 2000 * abs(math.sin(t * 7))
         indicator.update_level(level)
         time.sleep(0.05)
 

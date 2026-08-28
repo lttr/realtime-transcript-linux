@@ -11,6 +11,8 @@ from gi.repository import Gtk, Gdk, GLib
 import os
 from collections import deque
 
+from audio_levels import rms_to_level, is_active
+
 
 LEVEL_FILE = "/tmp/voice_indicator_level"
 
@@ -28,7 +30,6 @@ class AudioIndicatorWindow(Gtk.Window):
         self.last_volume = 0.0
         self.decay_rate = 0.92  # Slower fade out
         self.silence_start = None  # Track when silence began
-        self.silence_threshold = 0.12  # Below this = silence (normalized)
         self.bars_to_hide = 0
         self.all_bars_hidden_time = None  # When all bars disappeared
         self.stop_mode = False  # Stop signal received
@@ -80,6 +81,7 @@ class AudioIndicatorWindow(Gtk.Window):
             return True
 
         new_level = None
+        new_active = False
         try:
             if os.path.exists(LEVEL_FILE):
                 with open(LEVEL_FILE, 'r') as f:
@@ -90,7 +92,11 @@ class AudioIndicatorWindow(Gtk.Window):
                         self.drawing_area.queue_draw()
                         return True
                     volume = float(content)
-                    new_level = min(1.0, max(0.0, volume / 250.0))
+                    new_level = rms_to_level(volume)
+                    # Bar height and "is the user talking" are separate
+                    # questions: quiet speech is still speech even when it
+                    # draws as a near-zero bar.
+                    new_active = is_active(volume)
         except:
             pass
 
@@ -98,13 +104,16 @@ class AudioIndicatorWindow(Gtk.Window):
         for i in range(self.num_bars - 1):
             self.levels[i] = self.levels[i + 1]
 
-        if new_level is not None and abs(new_level - self.last_volume) > 0.01:
-            # New audio level - use it
+        # Always push the fresh reading. This used to be gated on the level
+        # having moved by >0.01, which froze the display whenever the level was
+        # steady - including permanently at full height once the old linear
+        # scaling clipped every speech chunk to 1.0.
+        if new_level is not None:
             self.levels[-1] = new_level
             self.last_volume = new_level
 
         # Track silence duration
-        if new_level is not None and new_level > self.silence_threshold:
+        if new_active:
             # Sound detected - always reset. Previously guarded by
             # `bars_to_hide < num_bars`, which left the overlay permanently
             # hidden once fully faded out, even when the user resumed talking.

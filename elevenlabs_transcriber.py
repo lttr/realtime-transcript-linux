@@ -5,6 +5,7 @@ import re
 import time
 import json
 import base64
+import queue
 import logging
 import shutil
 import subprocess
@@ -14,6 +15,7 @@ import numpy as np
 from typing import Optional
 from pathlib import Path
 from audio_utils import find_recorder
+from audio_levels import SILENCE_RMS
 
 # Try to import dotenv, but don't fail if not available
 try:
@@ -249,11 +251,79 @@ class ElevenLabsTranscriber:
         audio_buffer = bytearray()
         audio_lock = threading.Lock()
         committed_offset = [0]
-        silence_threshold = 30  # RMS volume threshold for speech detection
-                                 # (matches visual indicator's 0.12*250=30, so
-                                 # session silence and overlay fade-out agree)
+        # Shared with the visual indicator (audio_levels.SILENCE_RMS) so session
+        # silence and overlay fade-out agree by construction.
+        silence_threshold = SILENCE_RMS
         silence_timeout = 5.0
         max_duration = 300  # 5 minutes
+
+        # --- Start capturing BEFORE the network handshake ---
+        # Fetching the single-use token and opening the WebSocket takes 1-3s
+        # (worst case ~10s with both 5s timeouts). The overlay is already on
+        # screen by then, so the user starts talking straight away - and until
+        # now the mic subprocess wasn't running yet, so those first seconds were
+        # silently lost. Start the recorder first and buffer chunks in memory;
+        # the send thread drains the backlog once the socket is up. A dedicated
+        # reader thread does the buffering because the 64KB stdout pipe would
+        # only hold ~2s of 16kHz mono PCM before pw-record blocks.
+        try:
+            self.recorder_process = subprocess.Popen(
+                self._recorder_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            self.logger.info("Audio recorder started")
+        except Exception as e:
+            self.logger.error(f"Failed to start audio recorder: {e}")
+            return ""
+
+        pending_chunks = queue.Queue()
+
+        def abort_capture():
+            """Tear down the pre-started recorder when the handshake fails."""
+            self.stop_streaming.set()
+            try:
+                if self.recorder_process:
+                    self.recorder_process.terminate()
+                    self.recorder_process.wait(timeout=1)
+            except Exception:
+                pass
+            self.recorder_process = None
+
+        # --- Capture thread: owns the mic, volume metering and the PCM buffer ---
+        # Runs from before the handshake until the recorder is terminated, so the
+        # visual indicator animates from the moment the overlay appears.
+        def capture_audio():
+            nonlocal last_audio_activity_time
+            try:
+                while not self.stop_streaming.is_set():
+                    data = self.recorder_process.stdout.read(self.chunk_bytes)
+                    if not data or len(data) < self.chunk_bytes:
+                        break
+
+                    # Keep raw PCM so a mis-detected turn can be re-transcribed
+                    with audio_lock:
+                        audio_buffer.extend(data)
+
+                    # Volume drives the visual indicator + silence detection
+                    try:
+                        audio_array = np.frombuffer(data, dtype=np.int16)
+                        volume = np.sqrt(np.mean(audio_array.astype(np.float32) ** 2))
+                        if volume > silence_threshold:
+                            last_audio_activity_time = time.time()
+                        if volume_callback:
+                            volume_callback(volume)
+                    except Exception:
+                        pass
+
+                    pending_chunks.put(data)
+            except Exception as e:
+                self.logger.debug(f"Capture thread error: {e}")
+            finally:
+                pending_chunks.put(None)  # unblock a waiting send thread
+
+        capture_thread = threading.Thread(target=capture_audio, daemon=True)
+        capture_thread.start()
 
         # Get single-use token (more reliable than xi-api-key header)
         try:
@@ -265,14 +335,17 @@ class ElevenLabsTranscriber:
             )
             if token_resp.status_code != 200:
                 self.logger.error(f"Failed to get single-use token: HTTP {token_resp.status_code}")
+                abort_capture()
                 return ""
             token = token_resp.json().get("token")
             if not token:
                 self.logger.error("Empty token in response")
+                abort_capture()
                 return ""
             self.logger.info("Single-use token obtained")
         except Exception as e:
             self.logger.error(f"Failed to get single-use token: {e}")
+            abort_capture()
             return ""
 
         # Build WebSocket URL with token auth (no headers needed)
@@ -316,51 +389,26 @@ class ElevenLabsTranscriber:
                 error_text = parsed.get("error", parsed.get("message_type"))
                 self.logger.error(f"ElevenLabs WebSocket error: {error_text}")
                 ws.close()
+                abort_capture()
                 return ""
         except Exception as e:
             self.logger.error(f"WebSocket connection failed: {e}")
+            abort_capture()
             return ""
 
-        # Start parecord
-        try:
-            self.recorder_process = subprocess.Popen(
-                self._recorder_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-            )
-            self.logger.info("Audio recorder started")
-        except Exception as e:
-            self.logger.error(f"Failed to start audio recorder: {e}")
-            ws.close()
-            return ""
-
-        # --- Send thread: read PCM from parecord, base64-encode, send ---
+        # --- Send thread: drain captured PCM, base64-encode, send ---
+        # The first iterations flush whatever the capture thread buffered during
+        # the handshake, so speech from before the socket opened still gets sent.
         def send_audio():
-            nonlocal last_audio_activity_time
             first_chunk = True
             context_prompt = self._get_context_prompt()
             force_commit_interval = 10.0
             last_force_commit = time.time()
             try:
                 while not self.stop_streaming.is_set():
-                    data = self.recorder_process.stdout.read(self.chunk_bytes)
-                    if not data or len(data) < self.chunk_bytes:
+                    data = pending_chunks.get()
+                    if data is None:  # capture thread finished
                         break
-
-                    # Keep raw PCM so a mis-detected turn can be re-transcribed
-                    with audio_lock:
-                        audio_buffer.extend(data)
-
-                    # Calculate volume for visual indicator + speech detection
-                    try:
-                        audio_array = np.frombuffer(data, dtype=np.int16)
-                        volume = np.sqrt(np.mean(audio_array.astype(np.float32) ** 2))
-                        if volume > silence_threshold:
-                            last_audio_activity_time = time.time()
-                        if volume_callback:
-                            volume_callback(volume)
-                    except Exception:
-                        pass
 
                     # Force commit if no VAD commit received in a while
                     now = time.time()
