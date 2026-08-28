@@ -46,6 +46,7 @@ Real-time voice transcription for Linux (GNOME + Cosmic DE). Captures speech via
 ./voice_transcription.py lang [auto|en|cs]  # Language mode
 tail -f /tmp/voice_transcription.log        # View logs
 ./test_audio.py                             # Test microphone
+./test_audio.py calibrate                   # Measure silence vs speech, check audio_levels constants
 ./test_setup.py                             # Verify dependencies
 ```
 
@@ -71,7 +72,8 @@ TWO floors, deliberately separate - do NOT collapse them into one:
 
 - `rms_to_level()` is logarithmic (dB above `DISPLAY_FLOOR_RMS`, normalised to `LOUD_RMS`). The previous linear `volume / 250` conflated both floors and clipped EVERY real speech chunk to 1.0, so the bars filled up and froze at full height.
 - The indicators must push every fresh reading into the bar array. An older `abs(new - last) > 0.01` guard froze the display on any steady level.
-- Retune by measuring, not guessing - and measure silence and speech separately, or you will mistake speech for the noise floor.
+- Retune with `./test_audio.py calibrate`, never by eye. It records silence and speech as SEPARATE phases and checks the constants against both. Measuring them together is how this went wrong once: a recording of someone talking bottoms out around 1000 RMS, which looks exactly like a noise floor and is not one - the real floor here is ~25. Deriving `SILENCE_RMS` from that number would put the threshold above quiet speech and cut sessions off mid-sentence.
+- The bounds the calibration checks: noise floor (median of silence) < `SILENCE_RMS` < quiet speech (p10, NOT median - the threshold must clear the softest thing you say). Sparse keyboard/mouse transients above the threshold are fine; they only reset the overlay fade.
 - pw-record emits ~0.6s of full-scale (32767) samples at startup; harmless but it does peg the bars briefly at session start.
 
 ## Language guard (Czech/English only)

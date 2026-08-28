@@ -57,9 +57,9 @@ graph LR
 |--------|-----------|------------|
 | Protocol | WebSocket (SDK) | WebSocket (direct) |
 | Model | Streaming v3 | Scribe v2 Realtime |
-| Audio handling | Own subprocess + threads | Own subprocess + threads |
-| Phrase detection | Server-side turn events | Server-side VAD (0.7s silence) |
-| Session end | Server TerminationEvent | Dual-signal: no commits AND no mic audio for 5s |
+| Audio handling | Capture thread + queue, started pre-handshake | Capture thread + queue, started pre-handshake |
+| Phrase detection | Server-side turn events | Server-side VAD (1.0s silence) |
+| Session end | Server TerminationEvent | No mic audio above SILENCE_RMS for 5s |
 | Vocabulary priming | `keyterms_prompt` (list) | `previous_text` (context string) |
 | Latency | ~150ms partials | ~150ms partials |
 
@@ -83,25 +83,32 @@ sequenceDiagram
 ```
 
 ### ElevenLabs (server VAD + local audio activity)
-Audio streams continuously to the server. ElevenLabs server VAD commits transcript at phrase boundaries (0.7s silence). The local monitor tracks two signals for session end: server commit timestamps AND mic audio activity (RMS volume). Session ends only when BOTH signals show 5s of inactivity, preventing premature stops when user pauses between sentences.
+Audio streams continuously to the server. ElevenLabs server VAD commits transcript at phrase boundaries (1.0s silence). Session end is driven by mic audio activity alone: 5s below `audio_levels.SILENCE_RMS` and the monitor stops, which coincides with the overlay finishing its fade.
+
+A capture thread owns the mic and hands chunks to the send thread through a queue. That split exists so the recorder can start *before* the WebSocket handshake - the overlay is on screen and the user is already talking while the token request and connect are still in flight, so anything captured meanwhile is buffered and flushed once the socket opens.
 
 ```mermaid
 sequenceDiagram
     participant Mic as pw-record
+    participant Cap as Capture Thread
+    participant Q as chunk queue
     participant Send as Send Thread
     participant WS as ElevenLabs WebSocket
     participant Mon as Monitor Thread
     participant Win as Active Window
 
-    Mic->>Send: Raw audio frames
-    Send->>Send: Track audio activity (RMS > 50)
+    Note over Mic,Cap: Started BEFORE the handshake
+    Mic->>Cap: Raw audio frames
+    Cap->>Cap: RMS: volume_callback + activity (SILENCE_RMS)
+    Cap->>Q: Buffer chunk
+    Note over Q,Send: Backlog flushed once the socket is up
+    Q->>Send: Drain
     Send->>WS: Stream base64 audio chunks
     WS-->>Win: Inject committed transcript
-    WS-->>Mon: Update last_committed_time
 
     loop Every 0.5s
-        Mon->>Mon: Check both signals
-        alt No commits AND no mic audio > 5s
+        Mon->>Mon: Check mic activity
+        alt No mic audio above SILENCE_RMS for 5s
             Mon->>Mon: End session
         end
     end
@@ -109,7 +116,7 @@ sequenceDiagram
 
 ## Visual Indicator
 
-The visual indicator is a small GTK3 floating overlay showing 4 animated bars in the bottom-right corner. It runs as a separate process to avoid blocking the transcription pipeline. The main process writes volume levels to a temp file; the GTK process polls it every 50ms. Writing "stop" to the file triggers a brief animation before exit.
+The visual indicator is a small GTK3 floating overlay showing 4 animated bars centered at the bottom of the screen. It runs as a separate process to avoid blocking the transcription pipeline. The main process writes volume levels to a temp file; the GTK process polls it every 50ms. Writing "stop" to the file triggers a brief animation before exit.
 
 On Wayland/Cosmic DE, uses `gtk-layer-shell` for proper overlay positioning (`visual_indicator_wayland.py`). On X11, uses standard GTK window hints (`visual_indicator_gtk.py`).
 
@@ -127,12 +134,14 @@ graph LR
 ### No PyAudio
 Uses `pw-record` (PipeWire, current), `parecord` (PulseAudio), or `arecord` (ALSA) via subprocess. Avoids PyAudio's device enumeration complexity and build issues. More reliable with modern PipeWire stacks.
 
-### Dual-signal silence detection (ElevenLabs)
-Session end requires two independent signals to both show inactivity:
-- **Server commits** - no ElevenLabs VAD commit for 5s
-- **Mic audio activity** - no audio above RMS threshold (50) for 5s
+### Mic-silence session end (ElevenLabs)
+The session ends after 5s with no mic audio above `audio_levels.SILENCE_RMS`. Because the overlay fades on the same constant, the session ends exactly as the indicator disappears - the user gets an unambiguous "done, start another" signal instead of a session lingering on a trailing VAD commit. Server commit timestamps no longer gate session end; `last_committed_time` only drives the 10s force-commit fallback for a stalled server VAD.
 
-This prevents premature stops when the server hasn't committed yet but the user is still speaking (e.g., pausing between sentences).
+### Capture before handshake
+Both engines start the mic subprocess before any network work (token request, WebSocket connect, `client.connect()`), with a capture thread buffering into a `queue.Queue`. Previously the recorder started only after the handshake, while the overlay was already inviting the user to speak, so the first 1-3s were lost. The buffering must be a thread rather than the stdout pipe: the 64KB pipe holds only ~2s of 16kHz mono PCM before `pw-record` blocks.
+
+### Two audio level floors
+`audio_levels.py` is stdlib-only so both the venv transcribers and the system-python GTK subprocesses can import it. It keeps two separate floors, and collapsing them is a bug: `SILENCE_RMS` (30) answers "is anyone talking" for the overlay fade and the silence timeout, while `DISPLAY_FLOOR_RMS` (300) is the bottom of the bar display. A single linear `volume / 250` mapping previously served both and clipped every real speech chunk to 1.0, freezing the bars at full height.
 
 ### Subprocess Visual Indicator
 GTK runs in a separate process because the GTK main loop would block transcription. Temp file IPC is simple and sufficient at 50ms polling. Clean lifecycle: kill subprocess = cleanup.
