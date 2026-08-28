@@ -141,7 +141,7 @@ The session ends after 5s with no mic audio above `audio_levels.SILENCE_RMS`. Be
 Both engines start the mic subprocess before any network work (token request, WebSocket connect, `client.connect()`), with a capture thread buffering into a `queue.Queue`. Previously the recorder started only after the handshake, while the overlay was already inviting the user to speak, so the first 1-3s were lost. The buffering must be a thread rather than the stdout pipe: the 64KB pipe holds only ~2s of 16kHz mono PCM before `pw-record` blocks.
 
 ### Two audio level floors
-`audio_levels.py` is stdlib-only so both the venv transcribers and the system-python GTK subprocesses can import it. It keeps two separate floors, and collapsing them is a bug: `SILENCE_RMS` (30) answers "is anyone talking" for the overlay fade and the silence timeout, while `DISPLAY_FLOOR_RMS` (300) is the bottom of the bar display. A single linear `volume / 250` mapping previously served both and clipped every real speech chunk to 1.0, freezing the bars at full height.
+`audio_levels.py` is stdlib-only so both the venv transcribers and the system-python GTK subprocesses can import it. It keeps two separate floors, and collapsing them is a bug: `SILENCE_RMS` (120) answers "is anyone talking" for the overlay fade and the silence timeout, while `DISPLAY_FLOOR_RMS` (300) is the bottom of the bar display. A single linear `volume / 250` mapping previously served both and clipped every real speech chunk to 1.0, freezing the bars at full height.
 
 ### Subprocess Visual Indicator
 GTK runs in a separate process because the GTK main loop would block transcription. Temp file IPC is simple and sufficient at 50ms polling. Clean lifecycle: kill subprocess = cleanup.
