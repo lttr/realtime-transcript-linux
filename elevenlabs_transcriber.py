@@ -15,7 +15,7 @@ import numpy as np
 from typing import Optional
 from pathlib import Path
 from audio_utils import find_recorder
-from audio_levels import SILENCE_RMS
+from audio_levels import SILENCE_RMS, DISPLAY_FLOOR_RMS, LOUD_RMS
 
 # Try to import dotenv, but don't fail if not available
 try:
@@ -211,6 +211,30 @@ class ElevenLabsTranscriber:
         ]
         return " ".join(terms)
 
+    def _log_session_levels(self, samples):
+        """Log this session's RMS distribution for audio_levels tuning.
+
+        Skips the first second: pw-record emits full-scale samples at startup.
+        `active` is the share above SILENCE_RMS - if that stays high across a
+        session with normal pauses, the silence threshold is under the room's
+        noise floor and the silence timeout will not fire.
+        """
+        samples = samples[16:]
+        if len(samples) < 16:
+            return
+        ordered = sorted(samples)
+
+        def pct(p):
+            return ordered[min(len(ordered) - 1, int(len(ordered) * p))]
+
+        active = sum(1 for v in samples if v > SILENCE_RMS) / len(samples)
+        self.logger.info(
+            f"Session levels (RMS): p50={pct(0.5):.0f} p90={pct(0.9):.0f} "
+            f"max={max(samples):.0f} active={active * 100:.0f}% "
+            f"[SILENCE_RMS={SILENCE_RMS:.0f} DISPLAY_FLOOR_RMS={DISPLAY_FLOOR_RMS:.0f} "
+            f"LOUD_RMS={LOUD_RMS:.0f}]"
+        )
+
     def transcribe_streaming(self, audio_capture, text_callback=None, stop_flag=None, language: str = "en", volume_callback=None) -> str:
         """
         Perform streaming transcription via Scribe v2 Realtime WebSocket.
@@ -278,6 +302,11 @@ class ElevenLabsTranscriber:
             return ""
 
         pending_chunks = queue.Queue()
+        # Per-session RMS samples. Logged as percentiles at session end so the
+        # audio_levels constants can be tuned from real dictation instead of an
+        # artificial "speak for 8s" phase, which measures a different (usually
+        # softer) speaking level than actual use.
+        level_samples = []
 
         def abort_capture():
             """Tear down the pre-started recorder when the handshake fails."""
@@ -309,6 +338,7 @@ class ElevenLabsTranscriber:
                     try:
                         audio_array = np.frombuffer(data, dtype=np.int16)
                         volume = np.sqrt(np.mean(audio_array.astype(np.float32) ** 2))
+                        level_samples.append(float(volume))
                         if volume > silence_threshold:
                             last_audio_activity_time = time.time()
                         if volume_callback:
@@ -614,6 +644,8 @@ class ElevenLabsTranscriber:
             pass
 
         recv_thread.join(timeout=1)
+
+        self._log_session_levels(level_samples)
 
         self.logger.info(f"ElevenLabs session ended, total text: '{full_text.strip()[:80]}'")
         return full_text.strip()

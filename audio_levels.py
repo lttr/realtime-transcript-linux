@@ -27,13 +27,27 @@ every chunk of real speech, which is why the bars froze at full height.
 import math
 
 # Above this RMS the mic counts as active: the overlay fade resets and the
-# transcriber's silence timeout restarts. Just above the measured room floor.
-SILENCE_RMS = 30.0
+# transcriber's silence timeout restarts.
+#
+# 120 rather than the original 30: calibration measured this room's floor at
+# median 34, p90 48, peaking at 106 on keyboard transients, so 30 sat BELOW the
+# noise floor - the mic read as "active" 76% of the time even in silence, so the
+# 5s silence timeout could never fire and sessions ran to the 300s cap. 120
+# clears every measured silent sample while staying far below the quietest
+# measured speech (median 413 in a soft-spoken run, 2141 in a normal one).
+SILENCE_RMS = 120.0
 
 # Bottom of the bar display: at or below this the bars sit at minimum height.
 DISPLAY_FLOOR_RMS = 300.0
 
 # RMS that fills the bars completely. Above this the display just clips.
+#
+# Speech level varies ~5x with how close and how loudly you speak (measured
+# median 413 soft vs 2141 normal, against a near-constant noise floor), so these
+# two cannot be tuned from a single sample without either flattening the bars on
+# loud speech or clipping them on soft. They are set from normal dictation, which
+# is what the overlay is actually watched during; run a real session and check
+# the "session levels" line the transcriber logs before changing them.
 LOUD_RMS = 12000.0
 
 _CEILING_DB = 20.0 * math.log10(LOUD_RMS / DISPLAY_FLOOR_RMS)

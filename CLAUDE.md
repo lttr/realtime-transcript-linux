@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Real-time voice transcription for Linux (GNOME + Cosmic DE). Captures speech via global shortcut, injects text into active window. Supports both X11 and Wayland. Dual-engine: AssemblyAI (default) and ElevenLabs Scribe v2 Realtime. Both use WebSocket streaming with ~150ms latency.
+Real-time voice transcription for Linux (GNOME + Cosmic DE). Captures speech via global shortcut, injects text into active window. Supports both X11 and Wayland. Dual-engine: ElevenLabs Scribe v2 Realtime (default, the only one bound to the global shortcut) and AssemblyAI. Both use WebSocket streaming with ~150ms latency.
 
 ## Key Rules
 
@@ -37,8 +37,8 @@ Real-time voice transcription for Linux (GNOME + Cosmic DE). Captures speech via
 ## Dev Commands
 
 ```bash
-./voice_transcription.py                    # Run (AssemblyAI default)
-./voice_transcription.py --engine elevenlabs # ElevenLabs engine
+./voice_transcription.py                    # Run (ElevenLabs default)
+./voice_transcription.py --engine assemblyai # AssemblyAI engine
 ./voice_transcription.py --xdotool          # xdotool instead of clipboard
 ./voice_transcription.py status             # Engine availability
 ./voice_transcription.py ping               # Test API connectivity
@@ -52,7 +52,7 @@ tail -f /tmp/voice_transcription.log        # View logs
 
 ## VAD Tuning (elevenlabs_transcriber.py)
 
-- Silence threshold: `audio_levels.SILENCE_RMS` (30 int16 RMS, local mic activity detection). Shared with the visual indicator so session silence and overlay fade agree by construction rather than by two hand-matched numbers
+- Silence threshold: `audio_levels.SILENCE_RMS` (120 int16 RMS, local mic activity detection). Shared with the visual indicator so session silence and overlay fade agree by construction rather than by two hand-matched numbers
 - Silence timeout: 5.0s of mic silence (audio-only; chosen to coincide with the indicator's ~5s full fade-out so the session ends exactly when the overlay disappears, freeing up for the next session)
 - Server VAD silence threshold: 1.0s (ElevenLabs server-side; API default is 1.5s. Lower values fragment slow speech into "trailing-off" turns the model punctuates with ellipses)
 - `no_verbatim=true`: requested in the WS URL to remove filler words + disfluencies server-side, but the `scribe_v2_realtime` model currently IGNORES it (committed text still contains "uh"/"..."). The real fix is client-side: `_clean_filler_words` in `audio_utils.py` strips filler words, ellipses (anywhere - the model punctuates pauses with `...`), and orphan leading/trailing dashes (cut-off words). Also covers the AssemblyAI engine.
@@ -67,13 +67,14 @@ emphatic ~6000-14000.
 
 TWO floors, deliberately separate - do NOT collapse them into one:
 
-- `SILENCE_RMS` (30) via `is_active()` - is anyone talking? Drives the overlay fade AND the transcriber silence timeout, so the two agree by construction. Sits just above the room noise floor.
+- `SILENCE_RMS` (120) via `is_active()` - is anyone talking? Drives the overlay fade AND the transcriber silence timeout, so the two agree by construction. Sits just above the room noise floor.
 - `DISPLAY_FLOOR_RMS` (300) via `rms_to_level()` - bottom of the bar display. Mapping bars down to 30 would squeeze all real speech into the top third of the range and leave them visibly flat. Quiet speech can therefore be "active" while drawing a near-zero bar; that is intended.
 
 - `rms_to_level()` is logarithmic (dB above `DISPLAY_FLOOR_RMS`, normalised to `LOUD_RMS`). The previous linear `volume / 250` conflated both floors and clipped EVERY real speech chunk to 1.0, so the bars filled up and froze at full height.
 - The indicators must push every fresh reading into the bar array. An older `abs(new - last) > 0.01` guard froze the display on any steady level.
 - Retune with `./test_audio.py calibrate`, never by eye. It records silence and speech as SEPARATE phases and checks the constants against both. Measuring them together is how this went wrong once: a recording of someone talking bottoms out around 1000 RMS, which looks exactly like a noise floor and is not one - the real floor here is ~25. Deriving `SILENCE_RMS` from that number would put the threshold above quiet speech and cut sessions off mid-sentence.
-- The bounds the calibration checks: noise floor (median of silence) < `SILENCE_RMS` < quiet speech (p10, NOT median - the threshold must clear the softest thing you say). Sparse keyboard/mouse transients above the threshold are fine; they only reset the overlay fade.
+- The bounds the calibration checks: noise floor (median of silence) < `SILENCE_RMS` < quiet speech (p25 of VOICED chunks only - a plain percentile of the speech phase measures the pauses between words, not quiet speech). Sparse keyboard/mouse transients above the threshold are fine; they only reset the overlay fade.
+- Speech level varies ~5x with speaking volume and distance (measured p50 413 soft vs 2141 normal) against a near-constant noise floor, so `DISPLAY_FLOOR_RMS`/`LOUD_RMS` CANNOT be tuned from one calibration sample - it will either flatten the bars on loud speech or clip them on soft. Tune them from real dictation: every ElevenLabs session logs `Session levels (RMS): p50=... p90=... max=... active=...`. `grep 'Session levels' /tmp/voice_transcription.log`. The `active=` share is the giveaway for a bad silence threshold: high across a session with normal pauses means `SILENCE_RMS` is under the room's noise floor and the silence timeout will never fire.
 - pw-record emits ~0.6s of full-scale (32767) samples at startup; harmless but it does peg the bars briefly at session start.
 
 ## Language guard (Czech/English only)

@@ -13,7 +13,7 @@ from visual_indicator import AudioIndicator
 class VoiceTranscriber:
     """Voice transcription system with AssemblyAI and ElevenLabs engines"""
 
-    def __init__(self, engine='assemblyai', use_xdotool=False):
+    def __init__(self, engine='elevenlabs', use_xdotool=False):
         self.assemblyai = AssemblyAITranscriber(skip_availability_check=True)
         self.elevenlabs = ElevenLabsTranscriber(skip_availability_check=True)
         self.text_injector = TextInjector(use_xdotool=use_xdotool)
@@ -28,7 +28,7 @@ class VoiceTranscriber:
         # Default engine configuration
         self.engine = engine.lower()
         if self.engine not in ['assemblyai', 'elevenlabs']:
-            self.engine = 'assemblyai'
+            self.engine = 'elevenlabs'
         
         # Transcription state
         self.stop_flag = {'stop': False}
@@ -370,7 +370,7 @@ class VoiceTranscriber:
 
 def main():
     # Parse command line flags
-    engine = 'assemblyai'  # Default engine
+    engine = 'elevenlabs'  # Default engine (the only one bound to the global shortcut)
     use_xdotool = False    # Default: clipboard injection
     args = sys.argv[1:]
 
@@ -423,8 +423,8 @@ def main():
         print("Usage:")
         print("  ./voice_transcription.py                      # Start transcription (clipboard mode)")
         print("  ./voice_transcription.py --xdotool            # Use xdotool type instead of clipboard")
-        print("  ./voice_transcription.py --engine assemblyai  # Use AssemblyAI (default)")
-        print("  ./voice_transcription.py --engine elevenlabs  # Use ElevenLabs")
+        print("  ./voice_transcription.py --engine elevenlabs  # Use ElevenLabs (default)")
+        print("  ./voice_transcription.py --engine assemblyai  # Use AssemblyAI")
         print("  ./voice_transcription.py status               # Show system status")
         print("  ./voice_transcription.py ping                 # Test API connectivity")
         print("  ./voice_transcription.py stop                 # Stop active recording")

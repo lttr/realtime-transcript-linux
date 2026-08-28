@@ -117,10 +117,12 @@ def calibrate():
     # and mouse transients (measured up to ~270 RMS here) which are not the noise
     # floor. Judging the floor by p90 would reject perfectly good constants.
     noise_floor = percentile(silence, 0.5)
-    # Compare against QUIET speech (p10), not median speech: the threshold must
-    # sit below the softest thing the user says, or trailing-off sentence ends
-    # get treated as silence and the session cuts out mid-sentence.
-    quiet_speech = percentile(speech, 0.1)
+    # Compare against QUIET speech, but measured only over the chunks where the
+    # user was actually talking. An 8s "speaking" recording contains pauses
+    # between words that sit at the noise floor, so a plain p10 of the whole
+    # phase measures a pause, not quiet speech.
+    voiced = [v for v in speech if v > noise_floor * 4]
+    quiet_speech = percentile(voiced, 0.25) if voiced else 0.0
     transient = sum(1 for v in silence if v > SILENCE_RMS) / len(silence)
 
     print("\nVerdict")
@@ -161,14 +163,23 @@ def calibrate():
         print(f"✗ Bars clip at full height {clipped * 100:.0f}% of the time - "
               f"raise LOUD_RMS. This is what made the bars look frozen.")
         ok = False
+    elif high < 0.6:
+        # Spread alone is not enough: bars that wobble between 0.00 and 0.27 have
+        # "spread" but are visually a flat line at the bottom of the overlay.
+        print(f"⚠ Bars only reach {high:.2f} of full height at their peak - "
+              f"lower LOUD_RMS if this matches how you normally dictate. If you "
+              f"spoke more softly than usual here, re-run while speaking normally.")
     elif high - low < 0.25:
-        print("✗ Bars barely move (p90 - p10 < 0.25) - narrow the gap between "
+        print("⚠ Bars barely move (p90 - p10 < 0.25) - narrow the gap between "
               "DISPLAY_FLOOR_RMS and LOUD_RMS.")
-        ok = False
     else:
         print("✓ Bars use a healthy portion of their range.")
 
-    print("\n" + ("✓ Level constants fit this microphone."
+    print("\n  Bar-range findings are advisory - they depend on how loudly you "
+          "spoke.\n  The authoritative source is the 'Session levels' line "
+          "logged after a real\n  dictation session: "
+          "grep 'Session levels' /tmp/voice_transcription.log")
+    print("\n" + ("✓ Silence threshold fits this microphone."
                   if ok else "✗ Update the constants in audio_levels.py."))
     return ok
 

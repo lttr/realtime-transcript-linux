@@ -7,13 +7,13 @@ My own voice (@lttr):
 
 ---
 
-A real-time voice transcription system for Linux that transcribes speech and automatically types it into the currently active window. Both engines use WebSocket streaming: AssemblyAI (default) and ElevenLabs Scribe v2 Realtime.
+A real-time voice transcription system for Linux that transcribes speech and automatically types it into the currently active window. Both engines use WebSocket streaming: ElevenLabs Scribe v2 Realtime (default) and AssemblyAI.
 
 ## Features
 
-- **Real-time streaming transcription** - AssemblyAI streams results as you speak
+- **Real-time streaming transcription** - results stream in as you speak
 - **Automatic language detection** - Seamlessly handles mixed Czech/English conversations
-- **Dual cloud engines** - AssemblyAI (default) and ElevenLabs Scribe v2 Realtime, both WebSocket streaming
+- **Dual cloud engines** - ElevenLabs Scribe v2 Realtime (default) and AssemblyAI, both WebSocket streaming
 - **Progressive text injection** - types text as you speak, not just at the end
 - **Global keyboard shortcut** integration with GNOME
 - **Instance locking** - prevents overlapping sessions
@@ -73,7 +73,7 @@ Optional stop shortcut:
 3. Stop: wait for silence or press `Ctrl+Shift+Alt+S`
 
 ```bash
-./voice_transcription.py                     # Default (AssemblyAI)
+./voice_transcription.py                     # Default (ElevenLabs)
 ./voice_transcription.py --engine elevenlabs  # Use ElevenLabs
 ./voice_transcription.py status              # Engine availability
 ./voice_transcription.py ping                # Test connectivity
