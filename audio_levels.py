@@ -6,19 +6,24 @@ python3. Keeping the constants here is what makes the documented agreement
 between "session silence" and "overlay fade-out" true by construction instead of
 by two hand-matched magic numbers.
 
-Levels are int16 RMS. Measured on this setup (pw-record, 16kHz mono):
-silent room 16-40 (stray keyboard/mouse transients up to ~270), conversational
-speech ~1000-4000, emphatic ~6000-14000.
+Levels are int16 RMS. Measured on this setup (pw-record, 16kHz mono): silent room
+24-48 with keyboard/mouse transients to ~270; speech p50 413 soft-spoken and 2141
+at normal volume, emphatic peaks 6000-14000. Note that speech level swings ~5x
+with volume and distance while the noise floor stays put - so the display range
+cannot be tuned from a single sample. See `SILENCE_RMS` and LOUD_RMS below.
 
 Note the two floors are separate concerns and must NOT be collapsed into one:
 
-  SILENCE_RMS (30)        - is anyone talking at all? Drives the overlay fade and
-                            the transcriber's silence timeout. Sits just above the
-                            room noise floor.
-  DISPLAY_FLOOR_RMS (300) - what counts as the bottom of the bar display. Much
-                            higher, because mapping the bars all the way down to
-                            30 would squeeze all real speech into the top third of
-                            the range and leave the bars visibly flat.
+  SILENCE_RMS (120)       - is anyone talking at all? Drives the overlay fade and
+                            the transcriber's silence timeout. Must clear the room
+                            noise floor INCLUDING keyboard transients: at 30 it sat
+                            below this room's floor and the mic read as active 76%
+                            of the time in silence, so the silence timeout never
+                            fired.
+  DISPLAY_FLOOR_RMS (300) - what counts as the bottom of the bar display. Higher
+                            than the silence floor, because mapping the bars all
+                            the way down to 120 would squeeze real speech into the
+                            top of the range and leave the bars visibly flat.
 
 The previous linear `volume / 250` mapping conflated them and saturated at 1.0 on
 every chunk of real speech, which is why the bars froze at full height.
