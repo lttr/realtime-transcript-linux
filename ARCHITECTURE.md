@@ -4,7 +4,7 @@
 
 The system is triggered by a keyboard shortcut (Cosmic DE) which launches the main orchestrator. After acquiring an instance lock, it selects a transcription engine and spawns a visual indicator. Both engines produce text callbacks that feed into the TextInjector, which pastes results into the active window.
 
-**Current setup:** Cosmic DE (Wayland), ElevenLabs engine, PipeWire audio via `pw-record`, text injection via `wl-copy` + `wtype`.
+**Current setup:** Cosmic DE (Wayland), ElevenLabs engine, PipeWire audio via `pw-record`, text injection via `wl-copy` + Ctrl+Shift+V from a uinput virtual keyboard (`uinput_keyboard.py`).
 
 ```mermaid
 graph TD
@@ -19,7 +19,7 @@ graph TD
 
     AAI -.->|streaming events| CB[text callback]
     EL ==>|committed transcripts| CB
-    CB ==> TI[TextInjector / wl-copy + wtype]
+    CB ==> TI[TextInjector / wl-copy + uinput paste]
     TI ==> WIN[Active Window]
 
     VT ==> VI[visual_indicator.py]
@@ -147,7 +147,7 @@ Both engines start the mic subprocess before any network work (token request, We
 GTK runs in a separate process because the GTK main loop would block transcription. Temp file IPC is simple and sufficient at 50ms polling. Clean lifecycle: kill subprocess = cleanup.
 
 ### Clipboard-based text injection
-- **Wayland (current):** `wl-copy` + `wtype` keystroke
+- **Wayland (current):** `wl-copy` + Ctrl+Shift+V from a uinput keyboard (`uinput_keyboard.py`); `wtype` only as fallback when `/dev/uinput` isn't writable (on Cosmic `wtype` dropped the modifiers and switched the keyboard layout)
 - **X11:** `xsel` + `xdotool` keystroke
 
 Clipboard approach preferred over direct typing because `xdotool type` has issues with non-ASCII characters (Czech diacritics). Terminal detection switches paste key: `Ctrl+V` vs `Ctrl+Shift+V`.

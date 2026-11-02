@@ -10,7 +10,7 @@ Real-time voice transcription for Linux (GNOME + Cosmic DE). Captures speech via
 - Audio capture uses system `pw-record`/`parecord`/`arecord` subprocess, NOT PyAudio
 - Both transcribers manage their own mic subprocess directly
 - ElevenLabs uses `previous_text` on first audio chunk for vocabulary priming (equivalent of AssemblyAI's `keyterms_prompt`)
-- Wayland: text injection via `wl-copy` + `wtype`, X11: via `xsel` + `xdotool`
+- Wayland: text injection via `wl-copy` + Ctrl+Shift+V sent from a uinput keyboard (`uinput_keyboard.py`), X11: via `xsel` + `xdotool`. Do NOT go back to `wtype` for the paste keystroke: on Cosmic its virtual-keyboard keymap upload drops Ctrl/Shift (the window gets a bare `v`) and flips a cz layout to us. `wtype` is only a fallback when `/dev/uinput` isn't writable. After `wl-copy`, wait until `wl-paste` returns the new text before pasting, otherwise the previous clipboard contents occasionally get pasted
 - Both transcribers start the mic subprocess BEFORE the network handshake (token/WS/connect) and buffer chunks in a `queue.Queue` fed by a capture thread. Starting it after the handshake lost the first 1-3s of speech, since the overlay is already on screen by then. Never move the recorder start back below the handshake.
 - Audio level scaling lives ONLY in `audio_levels.py` - do not reintroduce local magic numbers in the indicators or transcribers
 
@@ -22,6 +22,7 @@ Real-time voice transcription for Linux (GNOME + Cosmic DE). Captures speech via
 | `assemblyai_transcriber.py` | WebSocket streaming via SDK, own audio capture, event-driven |
 | `elevenlabs_transcriber.py` | WebSocket streaming (Scribe v2 Realtime), own audio capture, server VAD + local audio activity tracking |
 | `audio_utils.py` | `is_wayland()`, `find_recorder()`, TextInjector, NotificationHelper |
+| `uinput_keyboard.py` | Stdlib `/dev/uinput` virtual keyboard for the Wayland paste/Enter keystrokes |
 | `audio_levels.py` | Shared RMS->bar-level scaling + silence floor (stdlib only: imported by both venv and system python) |
 | `visual_indicator.py` | Wrapper - spawns GTK subprocess (Wayland or X11), IPC via temp file |
 | `visual_indicator_gtk.py` | GTK3 floating overlay, audio level bars (X11) |

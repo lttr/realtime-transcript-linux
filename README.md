@@ -93,7 +93,7 @@ tail -f /tmp/voice_transcription.log
 rm /tmp/voice_transcription.pid
 ```
 
-- **Text not injecting**: X11: check `xdotool`/`xsel` installed. Wayland: check `wl-copy`/`wtype` installed. Ensure target window is focused.
+- **Text not injecting**: X11: check `xdotool`/`xsel` installed. Wayland: check `wl-copy` is installed and `/dev/uinput` is writable by your user (`getfacl /dev/uinput`); without it the paste falls back to `wtype`, which on Cosmic can type a bare `v`. Ensure target window is focused.
 - **Poor quality**: Check microphone, reduce background noise, try the other engine.
 
 ## Security

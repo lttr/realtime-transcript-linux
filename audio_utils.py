@@ -68,6 +68,7 @@ class TextInjector:
         self.logger = logging.getLogger(__name__)
         self.use_xdotool = use_xdotool  # False = clipboard (default), True = xdotool type
         self._wayland = is_wayland()
+        self._ukbd = None
 
         # Verify required tools at startup
         if self._wayland:
@@ -78,6 +79,14 @@ class TextInjector:
                 missing.append('wtype')
             if missing:
                 self.logger.warning(f"Wayland tools missing: {', '.join(missing)}")
+            # Paste keystrokes go through a uinput keyboard, not wtype (see
+            # uinput_keyboard.py for why). Created here, at startup, so the
+            # compositor has registered it by the time the first turn commits.
+            try:
+                from uinput_keyboard import UInputKeyboard
+                self._ukbd = UInputKeyboard()
+            except OSError as e:
+                self.logger.warning(f"uinput keyboard unavailable ({e}), falling back to wtype")
         else:
             # X11 support: xdotool + xsel required for text injection
             missing = []
@@ -135,17 +144,31 @@ class TextInjector:
         import subprocess
 
         if self._wayland:
-            # Wayland: wl-copy + wtype Ctrl+Shift+V
+            # Wayland: wl-copy + Ctrl+Shift+V (uinput, wtype fallback)
             proc = subprocess.Popen(['wl-copy'], stdin=subprocess.PIPE, text=True)
             proc.communicate(input=text)
             if proc.returncode != 0:
                 raise subprocess.CalledProcessError(proc.returncode, 'wl-copy')
 
-            time.sleep(0.05)
+            # Wait until the compositor actually serves the new selection.
+            # A fixed short sleep occasionally lost the race and the paste
+            # injected the PREVIOUS clipboard contents.
+            deadline = time.monotonic() + 0.5
+            while time.monotonic() < deadline:
+                current = subprocess.run(['wl-paste', '-n'], capture_output=True,
+                                         text=True).stdout
+                if current == text:
+                    break
+                time.sleep(0.02)
+            else:
+                self.logger.warning("Clipboard not confirmed after 0.5s, pasting anyway")
 
             # Always Ctrl+Shift+V on Wayland (works in both terminals and apps)
-            subprocess.run(['wtype', '-M', 'ctrl', '-M', 'shift', '-k', 'v',
-                           '-m', 'shift', '-m', 'ctrl'], check=True)
+            if self._ukbd:
+                self._ukbd.paste()
+            else:
+                subprocess.run(['wtype', '-M', 'ctrl', '-M', 'shift', '-k', 'v',
+                               '-m', 'shift', '-m', 'ctrl'], check=True)
         elif self.use_xdotool:
             # X11 support: direct keystroke simulation
             subprocess.run(['xdotool', 'type', '--delay', '0', text], check=True)
@@ -209,12 +232,15 @@ class TextInjector:
 
             if self._wayland:
                 # Wayland tool check
-                if not shutil.which('wl-copy') or not shutil.which('wtype'):
-                    self.logger.error("wl-copy/wtype not installed (required for Wayland)")
+                if not shutil.which('wl-copy'):
+                    self.logger.error("wl-copy not installed (required for Wayland)")
+                    return False
+                if not self._ukbd and not shutil.which('wtype'):
+                    self.logger.error("No uinput access and wtype not installed")
                     return False
                 if self.use_xdotool:
                     self.logger.warning("--xdotool not supported on Wayland, using clipboard")
-                method = "wayland-clipboard"
+                method = "wayland-clipboard" + ("" if self._ukbd else "+wtype")
             else:
                 # X11 support: tool check
                 if not shutil.which('xdotool'):
@@ -233,7 +259,9 @@ class TextInjector:
                 preceding_text = just_enter_match.group(1).strip()
                 text_to_inject = (preceding_text + " (enter)") if preceding_text else "(enter)"
                 self._do_inject(text_to_inject)
-                if self._wayland:
+                if self._wayland and self._ukbd:
+                    self._ukbd.enter()
+                elif self._wayland:
                     subprocess.run(['wtype', '-k', 'Return'], check=True)
                 else:
                     subprocess.run(['xdotool', 'key', 'Return'], check=True)  # X11 support
