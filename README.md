@@ -78,6 +78,7 @@ Optional stop shortcut:
 ./voice_transcription.py status              # Engine availability
 ./voice_transcription.py ping                # Test connectivity
 ./voice_transcription.py lang [auto|en|cs]   # Language mode
+./voice_transcription.py history [N]         # Last N dictated sessions (~/.local/share/voice-transcription/history.jsonl)
 ```
 
 ## Troubleshooting

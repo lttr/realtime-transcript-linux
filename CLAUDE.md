@@ -23,6 +23,7 @@ Real-time voice transcription for Linux (GNOME + Cosmic DE). Captures speech via
 | `elevenlabs_transcriber.py` | WebSocket streaming (Scribe v2 Realtime), own audio capture, server VAD + local audio activity tracking |
 | `audio_utils.py` | `is_wayland()`, `find_recorder()`, TextInjector, NotificationHelper |
 | `uinput_keyboard.py` | Stdlib `/dev/uinput` virtual keyboard for the Wayland paste/Enter keystrokes |
+| `transcript_history.py` | Durable per-session JSONL transcript history + reader for the `history` command |
 | `audio_levels.py` | Shared RMS->bar-level scaling + silence floor (stdlib only: imported by both venv and system python) |
 | `visual_indicator.py` | Wrapper - spawns GTK subprocess (Wayland or X11), IPC via temp file |
 | `visual_indicator_gtk.py` | GTK3 floating overlay, audio level bars (X11) |
@@ -31,6 +32,7 @@ Real-time voice transcription for Linux (GNOME + Cosmic DE). Captures speech via
 ## Runtime Files
 
 - Log: `/tmp/voice_transcription.log`
+- Transcript history: `~/.local/share/voice-transcription/history.jsonl` (one line per session that produced text, with per-phrase `injected` flag; written in the orchestrator's `finally`, so crashed/interrupted sessions are kept too)
 - Lock: `/tmp/voice_transcription.pid`
 - Stop signal: `/tmp/voice_transcription_stop.flag`
 - Visual IPC: `/tmp/voice_indicator_level`
@@ -45,6 +47,7 @@ Real-time voice transcription for Linux (GNOME + Cosmic DE). Captures speech via
 ./voice_transcription.py ping               # Test API connectivity
 ./voice_transcription.py stop               # Stop active recording
 ./voice_transcription.py lang [auto|en|cs]  # Language mode
+./voice_transcription.py history [N]        # Last N dictated sessions
 tail -f /tmp/voice_transcription.log        # View logs
 ./test_audio.py                             # Test microphone
 ./test_audio.py calibrate                   # Measure silence vs speech, check audio_levels constants

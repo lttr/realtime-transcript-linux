@@ -8,6 +8,7 @@ from audio_utils import NotificationHelper, TextInjector, is_wayland
 from elevenlabs_transcriber import ElevenLabsTranscriber
 from assemblyai_transcriber import AssemblyAITranscriber
 from visual_indicator import AudioIndicator
+import transcript_history
 
 
 class VoiceTranscriber:
@@ -32,6 +33,7 @@ class VoiceTranscriber:
         
         # Transcription state
         self.stop_flag = {'stop': False}
+        self.session_phrases = []  # [{"text", "injected"}] for transcript_history
         self.stop_file = "/tmp/voice_transcription_stop.flag"
         self.lock_file = "/tmp/voice_transcription.pid"
         
@@ -129,7 +131,9 @@ class VoiceTranscriber:
 
             # Inject the new text
             injection_start = time.time()
-            if self.text_injector.inject_text(phrase_text + " "):
+            injected = self.text_injector.inject_text(phrase_text + " ")
+            self.session_phrases.append({"text": phrase_text.strip(), "injected": bool(injected)})
+            if injected:
                 injection_time = time.time() - injection_start
                 self.logger.info(f"Text successfully injected ({injection_time*1000:.0f}ms total)")
                 print(f"✓ Injected: '{phrase_text}'")
@@ -192,6 +196,9 @@ class VoiceTranscriber:
         if not self._acquire_lock():
             return False
 
+        self.session_phrases = []
+        start_time = time.time()
+        outcome = "error"
         try:
             engine_name = self.engine.upper()
             print(f"Starting voice transcription with {engine_name}...")
@@ -214,6 +221,7 @@ class VoiceTranscriber:
 
             # Start transcription with selected engine
             start_time = time.time()
+            outcome = "completed"
 
             # Get language code
             language_code = self.supported_languages[self.current_language]['code']
@@ -260,9 +268,11 @@ class VoiceTranscriber:
         except KeyboardInterrupt:
             print("\n🛑 Transcription interrupted by user")
             self.stop_flag['stop'] = True
+            outcome = "interrupted"
             return False
         
         except Exception as e:
+            outcome = "error"
             self.logger.error(f"Transcription error: {e}")
             self.notification.show_notification(
                 "❌ Transcription failed", 
@@ -271,6 +281,11 @@ class VoiceTranscriber:
             return False
         
         finally:
+            # Record whatever was dictated, even if the session crashed mid-way
+            transcript_history.append_session(
+                start_time, time.time() - start_time, self.engine,
+                self.current_language, self.session_phrases, outcome,
+            )
             # Show stop flash if user-initiated stop (check stop file), then hide
             was_stopped = os.path.exists(self.stop_file) or self.stop_flag.get('stop')
             if was_stopped:
@@ -405,6 +420,14 @@ def main():
         transcriber.ping_test()
     elif command == "stop":
         transcriber.stop_recording()
+    elif command == "history":
+        limit = int(args[1]) if len(args) > 1 and args[1].isdigit() else 20
+        for rec in transcript_history.read_sessions(limit):
+            failed = sum(1 for p in rec.get("phrases", []) if not p.get("injected"))
+            flags = f" [{rec['outcome']}]" if rec.get("outcome") != "completed" else ""
+            flags += f" [{failed} not injected]" if failed else ""
+            print(f"{rec['ts']} ({rec['duration_s']}s, {rec['engine']}){flags}\n  {rec['text']}")
+        print(f"\n{transcript_history.HISTORY_FILE}")
     elif command == "lang":
         if len(sys.argv) > 2:
             lang = sys.argv[2].lower()
@@ -428,6 +451,7 @@ def main():
         print("  ./voice_transcription.py status               # Show system status")
         print("  ./voice_transcription.py ping                 # Test API connectivity")
         print("  ./voice_transcription.py stop                 # Stop active recording")
+        print("  ./voice_transcription.py history [N]          # Show last N sessions (default 20)")
         print("  ./voice_transcription.py lang                 # Show current language")
         print("  ./voice_transcription.py lang <code>          # Set language (auto/en/cs)")
 
