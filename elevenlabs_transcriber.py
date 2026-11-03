@@ -263,6 +263,17 @@ class ElevenLabsTranscriber:
 
         full_text = ""
         self.stop_streaming = threading.Event()
+        # Final-commit handshake for a manual stop. The server only commits a
+        # turn after vad_silence_threshold_secs of silence, so a short phrase
+        # followed by an immediate stop ("Okay, okay." + shortcut) used to be
+        # thrown away with the socket. On stop the monitor sets flush_requested,
+        # the send thread drains the backlog and sends an explicit commit
+        # (final_commit_sent), and the receive thread signals final_commit_done
+        # once the commit's transcript has been handled (injected).
+        flush_requested = threading.Event()
+        final_commit_sent = threading.Event()
+        final_commit_done = threading.Event()
+        final_commit_timeout = 4.0  # covers a Czech-recovery HTTP roundtrip
         last_committed_time = time.time()
         last_audio_activity_time = time.time()
 
@@ -438,6 +449,21 @@ class ElevenLabsTranscriber:
                 while not self.stop_streaming.is_set():
                     data = pending_chunks.get()
                     if data is None:  # capture thread finished
+                        if flush_requested.is_set():
+                            # Commit whatever the server holds uncommitted. A
+                            # short chunk of silence carries the commit flag.
+                            try:
+                                ws.send(json.dumps({
+                                    "message_type": "input_audio_chunk",
+                                    "audio_base_64": base64.b64encode(
+                                        bytes(self.sample_rate // 10 * 2)).decode("ascii"),
+                                    "commit": True,
+                                    "sample_rate": self.sample_rate,
+                                }))
+                                final_commit_sent.set()
+                                self.logger.debug("Final commit sent")
+                            except Exception as e:
+                                self.logger.debug(f"Final commit send error: {e}")
                         break
 
                     # Force commit if no VAD commit received in a while
@@ -504,6 +530,9 @@ class ElevenLabsTranscriber:
 
                     elif msg_type == "committed_transcript_with_timestamps":
                         last_committed_time = time.time()
+                        # Only a commit that arrives after the final commit was
+                        # sent can be its answer (not one already being handled)
+                        answers_final_commit = final_commit_sent.is_set()
 
                         # Advance the per-turn audio cursor once per turn so the
                         # next turn's slice starts in the right place, kept or not.
@@ -545,6 +574,9 @@ class ElevenLabsTranscriber:
                                     text_callback(text, full_text.strip())
                                 except Exception as e:
                                     self.logger.error(f"Error in text callback: {e}")
+
+                        if answers_final_commit:
+                            final_commit_done.set()
 
                     elif "error" in msg_type:
                         error_text = msg.get("error", msg_type)
@@ -592,13 +624,31 @@ class ElevenLabsTranscriber:
                     self.logger.info("Stop file detected, stopping...")
                     break
 
-            # Cleanup: terminate recorder + close WS to unblock send/receive threads
-            self.stop_streaming.set()
+            # Speech since the last commit means the server still holds an
+            # uncommitted turn (stop pressed before its VAD silence elapsed).
+            # Flush it instead of dropping it. Not needed after the silence
+            # timeout: VAD has long committed by then.
+            pending_turn = last_audio_activity_time > last_committed_time
+            if pending_turn and not self.stop_streaming.is_set():
+                flush_requested.set()  # before terminate: send thread checks it on EOF
+
+            # Stop the mic. The capture thread hits EOF, the send thread drains
+            # the backlog and (when flushing) sends the final commit.
             try:
                 if self.recorder_process:
                     self.recorder_process.terminate()
             except Exception:
                 pass
+
+            if flush_requested.is_set():
+                if final_commit_done.wait(timeout=final_commit_timeout):
+                    self.logger.info("Final turn flushed after stop")
+                else:
+                    self.logger.warning(
+                        f"No final commit within {final_commit_timeout:.0f}s after stop")
+
+            # Cleanup: close WS to unblock send/receive threads
+            self.stop_streaming.set()
             try:
                 ws.close()
             except Exception:
@@ -617,6 +667,10 @@ class ElevenLabsTranscriber:
         # Send thread exits when recorder is terminated by monitor
         try:
             send_thread.join()
+            if flush_requested.is_set():
+                # Stop was requested: the monitor is waiting for the final
+                # commit's transcript and closes everything itself.
+                monitor_thread.join(timeout=final_commit_timeout + 1)
         except KeyboardInterrupt:
             self.logger.info("Streaming interrupted by user")
             self.stop_streaming.set()
