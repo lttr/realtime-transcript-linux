@@ -64,6 +64,10 @@ class NotificationHelper:
 class TextInjector:
     """Helper for injecting text into active window"""
 
+    # Minimum gap between wl-copy and the paste keystroke on Wayland (see
+    # _do_inject). Also covers the focus-stability delay X11 sleeps up front.
+    PASTE_SETTLE_S = 0.2
+
     def __init__(self, use_xdotool=False):
         self.logger = logging.getLogger(__name__)
         self.use_xdotool = use_xdotool  # False = clipboard (default), True = xdotool type
@@ -149,6 +153,7 @@ class TextInjector:
             proc.communicate(input=text)
             if proc.returncode != 0:
                 raise subprocess.CalledProcessError(proc.returncode, 'wl-copy')
+            copied_at = time.monotonic()
 
             # Wait until the compositor actually serves the new selection.
             # A fixed short sleep occasionally lost the race and the paste
@@ -162,6 +167,16 @@ class TextInjector:
                 time.sleep(0.02)
             else:
                 self.logger.warning("Clipboard not confirmed after 0.5s, pasting anyway")
+
+            # wl-paste only proves the COMPOSITOR has the new selection, not
+            # that the target client has caught up. kitty that owns the
+            # clipboard itself (a copy in kitty, or Claude Code's OSC 52) keeps
+            # pasting its own cached copy until it processes losing ownership:
+            # measured, a paste <=50ms after wl-copy got the stale text, >=100ms
+            # never did. Hold the paste until PASTE_SETTLE_S after the copy.
+            remaining = self.PASTE_SETTLE_S - (time.monotonic() - copied_at)
+            if remaining > 0:
+                time.sleep(remaining)
 
             # Always Ctrl+Shift+V on Wayland (works in both terminals and apps)
             if self._ukbd:
@@ -250,8 +265,10 @@ class TextInjector:
 
             self.logger.info(f"Starting text injection ({method}): '{cleaned_text[:30]}{'...' if len(cleaned_text) > 30 else ''}'")
 
-            # Small delay for focus stability
-            time.sleep(0.1)
+            # Small delay for focus stability. On Wayland this is folded into
+            # the longer copy->paste settle in _do_inject.
+            if not self._wayland:
+                time.sleep(0.1)
 
             # Check for "just enter" command
             just_enter_match = re.search(r'(.*)just\s+enter[.\s]*$', cleaned_text.strip(), re.IGNORECASE)
